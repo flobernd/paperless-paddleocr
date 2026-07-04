@@ -1,0 +1,99 @@
+# Example: paperless-ngx (CPU-only) + PaddleOCR-VL server (GPU) on one host.
+# Layout analysis runs locally inside paperless; VLM recognition is delegated
+# to the paddleocr-vl-server below via PAPERLESS_PADDLEOCR_VL_SERVER_URL.
+#
+# Build + run from the examples/ directory:
+#   docker compose -f docker-compose.vl-remote.yml build
+#   docker compose -f docker-compose.vl-remote.yml up -d
+#
+# Required `.env` keys alongside this file:
+#   PADDLEOCR_VL_API_KEY=<some-random-string>
+#   PAPERLESS_DB_USER=<db-user>
+#   PAPERLESS_DB_PASSWORD=<strong-db-password>
+# Optional: PLUGIN_REF=v0.1.0 (release tag for reproducible builds).
+#
+# PADDLEOCR_VL_API_KEY must match the `api-key:` set in vllm_config.yaml -
+# the paperless container sends it as a Bearer token, the server validates it.
+
+services:
+  paperless:
+    build:
+      context: .
+      dockerfile: Dockerfile.vl-remote
+      args:
+        PLUGIN_REF: ${PLUGIN_REF:-master}
+        PAPERLESS_TAG: ${PAPERLESS_TAG:-beta}
+    image: paperless-paddleocr:vl-remote
+    restart: unless-stopped
+    depends_on:
+      - paperless-db
+      - paperless-redis
+      - paddleocr-vl-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - paperless_data:/usr/src/paperless/data
+      - paperless_media:/usr/src/paperless/media
+      - ./consume:/usr/src/paperless/consume
+    environment:
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_DBHOST: paperless-db
+      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?missing PAPERLESS_DB_USER in .env}
+      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?missing PAPERLESS_DB_PASSWORD in .env}
+      PAPERLESS_OCR_LANGUAGE: eng
+      PAPERLESS_PADDLEOCR_ENGINE: vl-remote
+      PAPERLESS_PADDLEOCR_VL_SERVER_URL: http://paddleocr-vl-server:8118
+      PAPERLESS_PADDLEOCR_VL_MODEL_NAME: PaddleOCR-VL-1.5-0.9B
+      PAPERLESS_PADDLEOCR_VL_API_KEY: ${PADDLEOCR_VL_API_KEY:?missing PADDLEOCR_VL_API_KEY in .env}
+      PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY: winner
+
+  paddleocr-vl-server:
+    # Switch to :latest-nvidia-gpu-sm120 for Blackwell (RTX 50-series).
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu
+    restart: unless-stopped
+    # Run as root so a fresh named volume is writeable for the model cache.
+    user: "0:0"
+    command:
+      - paddleocr
+      - genai_server
+      - --model_name=PaddleOCR-VL-1.5-0.9B
+      - --backend=vllm
+      - --host=0.0.0.0
+      - --port=8118
+      - --backend_config=/opt/vllm_config.yaml
+    expose:
+      - "8118"
+    volumes:
+      # Persist downloaded model weights (~2 GB) between restarts.
+      - paddlex_cache:/home/paddleocr/.paddlex
+      - ./vllm_config.yaml:/opt/vllm_config.yaml:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: ["gpu"]
+              count: 1
+
+  paperless-db:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - paperless_db:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: ${PAPERLESS_DB_USER:?missing PAPERLESS_DB_USER in .env}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?missing PAPERLESS_DB_PASSWORD in .env}
+
+  paperless-redis:
+    image: redis:8
+    restart: unless-stopped
+    volumes:
+      - paperless_redis:/data
+
+volumes:
+  paperless_data:
+  paperless_media:
+  paperless_db:
+  paperless_redis:
+  paddlex_cache:

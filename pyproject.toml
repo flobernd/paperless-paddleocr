@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperless-paddleocr"
+version = "0.1.0"
+description = "PaddleOCR provider for paperless-ngx"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Florian Bernd", email = "git@flobernd.de"},
+]
+keywords = ["paperless", "paperless-ngx", "paddleocr", "ocr", "ocrmypdf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    # NB: no "License ::" classifiers - PEP 639 / setuptools>=77 require the
+    # SPDX `license` expression above to be the single source of truth and
+    # reject the two from coexisting.
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing :: Linguistic",
+]
+# Note: the paddlepaddle wheel is *not* pinned as a hard dependency.
+# `paddlepaddle` (CPU) and `paddlepaddle-gpu` (CUDA) are mutually exclusive
+# Python packages - pinning one here would force a collision in any image
+# that needs the other. The runtime image is responsible for installing the
+# correct wheel before this plugin: see examples/Dockerfile.classic-cpu,
+# Dockerfile.classic-gpu, and Dockerfile.vl-remote. The classic / vl
+# engine adapters import paddle lazily via try / except so this package
+# stays importable even without paddle present, which keeps entry-point
+# discovery and basic tests working in CI without a paddle install.
+dependencies = [
+    "ocrmypdf>=17.4",
+    "lxml>=4.9",
+    "paddleocr>=3.0",
+]
+
+[project.optional-dependencies]
+# The doc-parser extra pulls paddlex[genai-client,ocr], which only the
+# vl-remote engine needs. classic-cpu/classic-gpu images stay lean without it.
+vl = ["paddleocr[doc-parser]>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/flobernd/paperless-paddleocr"
+Issues = "https://github.com/flobernd/paperless-paddleocr/issues"
+
+[project.entry-points."paperless_ngx.parsers"]
+paddleocr = "paperless_paddleocr.parser:PaperlessPaddleParser"
+
+[tool.setuptools.packages.find]
+include = ["paperless_paddleocr*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501", # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+strict_equality = true

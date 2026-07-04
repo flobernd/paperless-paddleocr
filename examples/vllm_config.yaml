@@ -1,0 +1,22 @@
+# vLLM backend configuration passed via `paddleocr genai_server --backend_config`.
+# Every key here is forwarded as `--key=value` to the underlying vLLM server.
+
+# Context window. 8K covers one PaddleOCR-VL page; raise for very long tables.
+max-model-len: 8192
+
+# Fraction of total GPU memory vLLM may use. Lower if the GPU has other consumers.
+gpu-memory-utilization: 0.85
+
+# Use compiled CUDA-graph execution. Set to true if graph capture OOMs on warmup.
+enforce-eager: false
+
+# Disabled - no benefit for OCR.
+enable-prefix-caching: false
+
+# Disabled - image features are computed per page and never reused.
+mm-processor-cache-gb: 0
+
+# Bearer-token auth on /v1/* endpoints. Set this to the same value as
+# PADDLEOCR_VL_API_KEY in your .env - the paperless plugin sends the
+# matching token via PAPERLESS_PADDLEOCR_VL_API_KEY.
+# api-key: change-me-please

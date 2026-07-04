@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+#
+# paperless-ngx + paperless-paddleocr (classic-cpu engine).
+#
+# Build:
+#   docker build \
+#     --build-arg PLUGIN_REF=v0.1.0 \
+#     -f examples/Dockerfile.classic-cpu \
+#     -t paperless-paddleocr:classic-cpu .
+#
+# PLUGIN_REF - any tag, branch, or SHA from the plugin repo.
+# PAPERLESS_TAG - paperless-ngx base image tag.
+
+ARG PLUGIN_REF=master
+ARG PAPERLESS_TAG=beta
+
+# --- Stage 1: build the plugin wheel from source --------------------------
+FROM python:3.12-slim AS plugin
+ARG PLUGIN_REF
+ADD https://github.com/flobernd/paperless-paddleocr.git#${PLUGIN_REF} /src
+WORKDIR /src
+RUN pip install --no-cache-dir build \
+ && python -m build --wheel --outdir /dist
+
+# --- Stage 2: layer the plugin + CPU paddle onto paperless-ngx ------------
+FROM ghcr.io/paperless-ngx/paperless-ngx:${PAPERLESS_TAG}
+
+# Native libraries required by PaddleOCR's OpenCV backend.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libgl1 \
+      libglib2.0-0 \
+      libsm6 \
+      libxext6 \
+      libxrender1 \
+      libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
+
+# CPU paddlepaddle, then the plugin wheel.
+COPY --from=plugin /dist/*.whl /tmp/plugin/
+RUN pip install --no-cache-dir "paddlepaddle>=3.0" \
+ && pip install --no-cache-dir /tmp/plugin/*.whl \
+ && rm -rf /tmp/plugin

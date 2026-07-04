@@ -1,0 +1,64 @@
+# Example: paperless-ngx + paperless-paddleocr running the classic-cpu engine.
+#
+# Build + run from the examples/ directory:
+#   docker compose -f docker-compose.classic-cpu.yml build
+#   docker compose -f docker-compose.classic-cpu.yml up -d
+#
+# Required `.env` keys alongside this file:
+#   PAPERLESS_DB_USER=<db-user>
+#   PAPERLESS_DB_PASSWORD=<strong-db-password>
+# Optional: PLUGIN_REF=v0.1.0 (release tag for reproducible builds).
+
+services:
+  paperless:
+    build:
+      context: .
+      dockerfile: Dockerfile.classic-cpu
+      args:
+        PLUGIN_REF: ${PLUGIN_REF:-master}
+        PAPERLESS_TAG: ${PAPERLESS_TAG:-beta}
+    image: paperless-paddleocr:classic-cpu
+    restart: unless-stopped
+    depends_on:
+      - paperless-db
+      - paperless-redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - paperless_data:/usr/src/paperless/data
+      - paperless_media:/usr/src/paperless/media
+      - ./consume:/usr/src/paperless/consume
+      # Persist downloaded PaddleOCR model weights across container rebuilds.
+      - paddlex_cache:/usr/src/paperless/.paddlex
+    environment:
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_DBHOST: paperless-db
+      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?missing PAPERLESS_DB_USER in .env}
+      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?missing PAPERLESS_DB_PASSWORD in .env}
+      PAPERLESS_OCR_LANGUAGE: eng
+      PAPERLESS_PADDLEOCR_ENGINE: classic-cpu
+      # Optional: PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY: winner | merge
+      # Optional: PAPERLESS_PADDLEOCR_LANGUAGE: ml   # multi-script single-pass
+
+  paperless-db:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - paperless_db:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: ${PAPERLESS_DB_USER:?missing PAPERLESS_DB_USER in .env}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?missing PAPERLESS_DB_PASSWORD in .env}
+
+  paperless-redis:
+    image: redis:8
+    restart: unless-stopped
+    volumes:
+      - paperless_redis:/data
+
+volumes:
+  paperless_data:
+  paperless_media:
+  paperless_db:
+  paperless_redis:
+  paddlex_cache:

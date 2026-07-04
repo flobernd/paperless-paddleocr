@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+#
+# paperless-ngx + paperless-paddleocr (classic-gpu engine).
+# Runs the classic PaddleOCR CNN pipeline locally on an NVIDIA GPU exposed
+# via nvidia-container-toolkit.
+#
+# Build:
+#   docker build \
+#     --build-arg PLUGIN_REF=v0.1.0 \
+#     --build-arg CUDA_WHEEL=cu126 \
+#     -f examples/Dockerfile.classic-gpu \
+#     -t paperless-paddleocr:classic-gpu .
+#
+# CUDA_WHEEL - Paddle GPU wheel index:
+#   cu126 (default) - CUDA 12.6, Ampere / Ada / Hopper.
+#   cu129           - CUDA 12.9, Blackwell (RTX 50-series, sm_120).
+
+ARG PLUGIN_REF=master
+ARG PAPERLESS_TAG=beta
+ARG CUDA_WHEEL=cu126
+
+# --- Stage 1: build the plugin wheel from source --------------------------
+FROM python:3.12-slim AS plugin
+ARG PLUGIN_REF
+ADD https://github.com/flobernd/paperless-paddleocr.git#${PLUGIN_REF} /src
+WORKDIR /src
+RUN pip install --no-cache-dir build \
+ && python -m build --wheel --outdir /dist
+
+# --- Stage 2: layer plugin + GPU paddle + CUDA runtime libs ---------------
+FROM ghcr.io/paperless-ngx/paperless-ngx:${PAPERLESS_TAG}
+ARG CUDA_WHEEL
+
+# OpenCV native libs plus the CUDA-12 user-space runtime libraries
+# (cuDNN, NCCL) that paddlepaddle-gpu links against.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg \
+ && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/3bf863cc.pub \
+      | gpg --dearmor -o /usr/share/keyrings/nvidia-cuda.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/nvidia-cuda.gpg] https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/ /" \
+      > /etc/apt/sources.list.d/nvidia-cuda.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libgl1 \
+      libglib2.0-0 \
+      libsm6 \
+      libxext6 \
+      libxrender1 \
+      libgomp1 \
+      libcudnn9-cuda-12 \
+      libnccl2 \
+ && apt-get purge -y curl gnupg \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# paddlepaddle-gpu from Baidu's custom index, then the plugin wheel.
+COPY --from=plugin /dist/*.whl /tmp/plugin/
+RUN pip install --no-cache-dir \
+      --index-url "https://www.paddlepaddle.org.cn/packages/stable/${CUDA_WHEEL}/" \
+      paddlepaddle-gpu \
+ && pip install --no-cache-dir /tmp/plugin/*.whl \
+ && rm -rf /tmp/plugin
+
+ENV PAPERLESS_PADDLEOCR_ENGINE=classic-gpu
