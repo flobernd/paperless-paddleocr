@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 210" role="img" aria-label="paperless-paddleocr">
+  <title>paperless-paddleocr</title>
+  <defs>
+    <linearGradient id="paddle-l" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(84,16)">
+    <path transform="translate(63,50) rotate(-30)" fill="url(#paddle-l)" d="M -4 -46 A 4 4 0 0 1 4 -46 L 4 18 Q 17 22 16 42 Q 15 60 0 66 Q -15 60 -16 42 Q -17 22 -4 18 Z"/>
+    <rect x="38" y="18" width="50" height="64" rx="8" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
+    <rect x="47" y="30" width="26" height="5" rx="2.5" fill="#14B8A6"/>
+    <rect x="47" y="41" width="32" height="4" rx="2" fill="#94A3B8"/>
+    <rect x="47" y="50" width="32" height="4" rx="2" fill="#94A3B8"/>
+    <rect x="47" y="59" width="24" height="4" rx="2" fill="#94A3B8"/>
+    <rect x="47" y="68" width="18" height="4" rx="2" fill="#94A3B8"/>
+  </g>
+
+  <text x="140" y="166" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="24" letter-spacing="-0.3">
+    <tspan fill="#475569" font-weight="500">paperless-</tspan><tspan fill="#0D9488" font-weight="700">paddleocr</tspan>
+  </text>
+  <text x="140" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" letter-spacing="0.5" fill="#94A3B8">PaddleOCR for paperless-ngx</text>
+</svg>

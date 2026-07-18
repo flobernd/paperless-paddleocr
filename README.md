@@ -1,4 +1,10 @@
-# paperless-paddleocr
+<!-- markdownlint-disable-file MD033 MD041 -->
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo-light.png" alt="paperless-paddleocr" width="360">
+  </picture>
+</div>
 
 A drop-in [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) provider for [paperless-ngx](https://github.com/paperless-ngx/paperless-ngx),
 delivered as a parser plugin that replaces the built-in Tesseract OCR pipeline.
