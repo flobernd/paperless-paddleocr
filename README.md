@@ -63,11 +63,11 @@ The three layers contributed by *this* package:
 
 ## Choosing an engine
 
-| `PAPERLESS_PADDLEOCR_ENGINE` | Hardware            | Paddle wheel        | Image recipe                                                                              | Throughput / accuracy notes                                                          |
-|------------------------------|---------------------|---------------------|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| `classic-cpu` (default)      | x86_64 CPU          | `paddlepaddle`      | [`Dockerfile.classic-cpu`](examples/Dockerfile.classic-cpu)                               | Roughly 1-3 pages/sec on a modern CPU (rough guidance, not a benchmark). No GPU needed. Right default for most deployments.   |
-| `classic-gpu`                | Local NVIDIA GPU    | `paddlepaddle-gpu`  | [`Dockerfile.classic-gpu`](examples/Dockerfile.classic-gpu)                               | Fast classic pipeline accelerated on a local GPU. Same accuracy as CPU, lower latency. |
-| `vl-remote`                  | Remote NVIDIA host  | `paddlepaddle` (CPU layout only) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
+| `PAPERLESS_PADDLEOCR_ENGINE` | Hardware | Paddle wheel | Image recipe | Throughput / accuracy notes |
+| --- | --- | --- | --- | --- |
+| `classic-cpu` (default) | x86_64 CPU | `paddlepaddle` | [`Dockerfile.classic-cpu`](examples/Dockerfile.classic-cpu) | Roughly 1-3 pages/sec on a modern CPU (rough guidance, not a benchmark). No GPU needed. Right default for most deployments. |
+| `classic-gpu` | Local NVIDIA GPU | `paddlepaddle-gpu` | [`Dockerfile.classic-gpu`](examples/Dockerfile.classic-gpu) | Fast classic pipeline accelerated on a local GPU. Same accuracy as CPU, lower latency. |
+| `vl-remote` | Remote NVIDIA host | `paddlepaddle` (CPU layout only) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
 
 ## Installation
 
@@ -77,7 +77,7 @@ fetch the plugin source from this repository at build time and bake the wheel in
 Pick the method that matches your environment:
 
 | Method | When to use |
-|--------|-------------|
+| --- | --- |
 | **A. Custom Docker image (recommended)** | Docker / Docker Compose deployments. Works for every engine including `classic-gpu`. |
 | **B. Bootstrap script** | Managed paperless containers where you can mount into `/custom-cont-init.d/` but cannot rebuild the image. |
 | **C. Non-Docker host install** | paperless-ngx running directly on a host / VM. |
@@ -108,10 +108,10 @@ For local-GPU inference with `paddlepaddle-gpu`. Additional build arg:
 
 - `CUDA_WHEEL` - which Paddle GPU index to pull from:
 
-| `CUDA_WHEEL` | CUDA | Hardware                                          |
-|--------------|------|---------------------------------------------------|
+| `CUDA_WHEEL` | CUDA | Hardware |
+| --- | --- | --- |
 | `cu126` (default) | 12.6 | Ampere (CC 8.0), Ada (CC 8.9), Hopper (CC 9.0) |
-| `cu129`           | 12.9 | Blackwell (RTX 50-series, sm_120)              |
+| `cu129` | 12.9 | Blackwell (RTX 50-series, sm_120) |
 
 ```bash
 docker build \
