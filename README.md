@@ -32,35 +32,6 @@ keeps working, and archive PDFs remain PDF/A.
 - Column-aware sidecar text - multi-column scans produce reading-order plain-text similar to Tesseract's output
 - Output is still searchable PDF/A - generated through ocrmypdf, identical to the built-in parser
 
-## Architecture
-
-```text
-paperless consumer
-        ▼
-PaperlessPaddleParser       ← this package (paperless parser plugin)
-        ▼
-ocrmypdf.ocr(plugins=[…])   ← paperless already invokes ocrmypdf for tesseract
-        ▼
-MultiLangPaddleEngine       ← this package (multi-lang merge subclass)
-        ▼
-PaddleOCREngine             ← this package (ocrmypdf OcrEngine over PaddleOCR)
-        ▼
-paddleocr.PaddleOCR.predict()   ── or ──   paddleocr.PaddleOCRVL.predict()
-   (classic-cpu / classic-gpu)              (vl-remote → remote vLLM)
-```
-
-`ocrmypdf` continues to handle PDF/A conversion, deskew, page rotation, image cleaning, sidecar text extraction,
-color conversion, and encryption - only the OCR engine itself is replaced.
-
-The three layers contributed by *this* package:
-
-- **`PaperlessPaddleParser`** - paperless parser plugin discovered through the `paperless_ngx.parsers` entry point. Mirrors
-  paperless's built-in Tesseract parser, points `ocrmypdf` at our engine, and translates language codes.
-- **`PaddleOCREngine`** - the ocrmypdf `OcrEngine` implementation that drives PaddleOCR (classic CNN pipeline on CPU or GPU,
-  or remote VL), emits hOCR, and renders the text-only PDF layer.
-- **`MultiLangPaddleEngine`** - subclass of `PaddleOCREngine` that runs one pass per language and NMS-merges the word boxes by
-  confidence.
-
 ## Choosing an engine
 
 | `PAPERLESS_PADDLEOCR_ENGINE` | Hardware | Paddle wheel | Image recipe | Throughput / accuracy notes |
