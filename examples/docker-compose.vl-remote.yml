@@ -22,7 +22,7 @@ services:
       dockerfile: Dockerfile.vl-remote
       args:
         PLUGIN_REF: ${PLUGIN_REF:-master}
-        PAPERLESS_TAG: ${PAPERLESS_TAG:-beta}
+        PAPERLESS_TAG: ${PAPERLESS_TAG:-latest}
     image: paperless-paddleocr:vl-remote
     restart: unless-stopped
     depends_on:

@@ -16,7 +16,7 @@
 #   cu129           - CUDA 12.9, Blackwell (RTX 50-series, sm_120).
 
 ARG PLUGIN_REF=master
-ARG PAPERLESS_TAG=beta
+ARG PAPERLESS_TAG=latest
 ARG CUDA_WHEEL=cu126
 
 # --- Stage 1: build the plugin wheel from source --------------------------

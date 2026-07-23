@@ -16,7 +16,7 @@ services:
       dockerfile: Dockerfile.classic-cpu
       args:
         PLUGIN_REF: ${PLUGIN_REF:-master}
-        PAPERLESS_TAG: ${PAPERLESS_TAG:-beta}
+        PAPERLESS_TAG: ${PAPERLESS_TAG:-latest}
     image: paperless-paddleocr:classic-cpu
     restart: unless-stopped
     depends_on:

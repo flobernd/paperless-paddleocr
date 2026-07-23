@@ -14,7 +14,7 @@ Paperless continues to drive `ocrmypdf` exactly as before. Existing OCR configur
 keeps working, and archive PDFs remain PDF/A.
 
 > [!NOTE]
-> Requires paperless-ngx 3.x (currently in beta) with the parser plugin
+> Requires paperless-ngx 3.0 or later with the parser plugin
 > system (the `paperless_ngx.parsers` entry-point group). On older releases
 > the entry point is not discovered and the plugin is silently inactive.
 
@@ -56,10 +56,10 @@ Pick the method that matches your environment:
 ### A. Custom Docker image (recommended)
 
 Each engine has a matching recipe Dockerfile that pulls plugin source from a chosen Git ref, builds the wheel, and layers it
-plus the right paddle wheel onto `ghcr.io/paperless-ngx/paperless-ngx:beta`. Build args:
+plus the right paddle wheel onto `ghcr.io/paperless-ngx/paperless-ngx:latest`. Build args:
 
 - `PLUGIN_REF` - Git ref to build from. Use a release tag (`v0.1.0`) for reproducible builds; `master` tracks the latest snapshot.
-- `PAPERLESS_TAG` - paperless-ngx base image tag (default `beta`).
+- `PAPERLESS_TAG` - paperless-ngx base image tag (default `latest`). Set a version tag (`3.0`) for reproducible builds.
 
 #### `classic-cpu`
 
@@ -70,7 +70,7 @@ docker build \
     -t paperless-paddleocr:classic-cpu .
 ```
 
-Drop-in replacement for `ghcr.io/paperless-ngx/paperless-ngx:beta`. Compose example:
+Drop-in replacement for `ghcr.io/paperless-ngx/paperless-ngx:latest`. Compose example:
 [`examples/docker-compose.classic-cpu.yml`](examples/docker-compose.classic-cpu.yml).
 
 #### `classic-gpu`
@@ -417,8 +417,8 @@ your base image or use a custom `Dockerfile` instead of `/custom-cont-init.d/`.
 
 ### Plugin is not discovered (no "Loaded third-party parser" log line)
 
-1. Verify the paperless-ngx image supports the beta parser plugin system
-   (`paperless_ngx.parsers` entry-point group). Older images silently ignore plugins.
+1. Verify the paperless-ngx image supports the parser plugin system
+   (`paperless_ngx.parsers` entry-point group). Images older than 3.0 silently ignore plugins.
 2. Check that `setup.sh` exited successfully (look for "bootstrap complete" in logs), or that the recipe Dockerfile actually
    installed the plugin (`pip show paperless-paddleocr` inside the container).
 
