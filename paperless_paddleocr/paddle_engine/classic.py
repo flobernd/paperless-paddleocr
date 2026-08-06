@@ -48,6 +48,9 @@ def _engine_key(options: Any) -> tuple[Any, ...]:
     return (
         _resolve_lang(options),
         _resolve_device(options),
+        getattr(options, "paddle_det_model_name", None),
+        getattr(options, "paddle_rec_model_name", None),
+        getattr(options, "paddle_cls_model_name", None),
         getattr(options, "paddle_det_model_dir", None),
         getattr(options, "paddle_rec_model_dir", None),
         getattr(options, "paddle_cls_model_dir", None),
@@ -111,8 +114,11 @@ def _build_engine(options: Any) -> Any:
         # OneDNN, so it is CPU-only.
         kwargs["enable_mkldnn"] = False
     for opt_attr, paddle_kw in (
+        ("paddle_det_model_name", "text_detection_model_name"),
         ("paddle_det_model_dir", "text_detection_model_dir"),
+        ("paddle_rec_model_name", "text_recognition_model_name"),
         ("paddle_rec_model_dir", "text_recognition_model_dir"),
+        ("paddle_cls_model_name", "textline_orientation_model_name"),
         ("paddle_cls_model_dir", "textline_orientation_model_dir"),
     ):
         value = getattr(options, opt_attr, None)

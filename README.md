@@ -386,6 +386,26 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
   post-processing across `PAPERLESS_THREADS_PER_WORKER` threads. Scale page throughput
   with `PAPERLESS_TASK_WORKERS` (each worker process gets its own engine instance).
 
+### Choosing classic-pipeline models
+
+For most languages the classic engine defaults to the `PP-OCRv6_medium` detection / recognition models. On low-power
+CPUs (NAS appliances, small ARM boards) the smaller official variants trade a little accuracy for a large speedup.
+Select them by name via `PAPERLESS_OCR_USER_ARGS`:
+
+```yaml
+PAPERLESS_OCR_USER_ARGS: '{"paddle_det_model_name": "PP-OCRv6_small_det", "paddle_rec_model_name": "PP-OCRv6_small_rec"}'
+```
+
+Named official models are downloaded on first use into `~/.paddlex/official_models/` (mount
+`/usr/src/paperless/.paddlex` as a volume to persist them across container restarts). The
+`paddle_det_model_dir` / `paddle_rec_model_dir` / `paddle_cls_model_dir` options point at local model directories
+instead - needed only for air-gapped hosts or self-trained models. When a directory is given together with a name, the
+name must match the `Global.model_name` declared in the directory's `inference.yml`.
+
+> [!NOTE]
+> As soon as any model name or directory is set, PaddleOCR stops deriving models from the configured language (it
+> logs a warning saying `lang` is ignored). Pick models that cover your documents' language and script yourself.
+
 ## Troubleshooting
 
 ### `pip install` of `paddlepaddle-gpu` fails with `No matching distribution`
