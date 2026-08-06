@@ -67,3 +67,12 @@ def test_custom_model_dirs_are_part_of_the_key(tmp_path):
     with_dir.paddle_det_model_dir = "/models/det"
     classic.build_page(img, with_dir)
     assert _CountingPaddleOCR.instances == 2
+
+
+def test_custom_model_names_are_part_of_the_key(tmp_path):
+    img = _png(tmp_path)
+    classic.build_page(img, _opts())
+    with_name = _opts()
+    with_name.paddle_rec_model_name = "PP-OCRv6_small_rec"
+    classic.build_page(img, with_name)
+    assert _CountingPaddleOCR.instances == 2
