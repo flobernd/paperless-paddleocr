@@ -1,0 +1,42 @@
+"""Model-name options for the classic pipeline.
+
+``add_options`` must register the ``--paddle-*-model-name`` args so
+``ocrmypdf.ocr(paddle_det_model_name=...)`` accepts them as kwargs (paperless
+forwards ``PAPERLESS_OCR_USER_ARGS`` into that call unchanged). Without a name
+kwarg, paddleocr pairs a custom model dir with the default model name from the
+base pipeline config and paddlex rejects the dir with "Model name mismatch",
+so model names are the only way to select non-default official models.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from paperless_paddleocr import ocrmypdf_plugin
+
+
+def test_add_options_registers_model_name_args():
+    parser = argparse.ArgumentParser()
+    ocrmypdf_plugin.add_options(parser)
+    ns = parser.parse_args(
+        [
+            "--paddle-det-model-name",
+            "PP-OCRv6_small_det",
+            "--paddle-rec-model-name",
+            "PP-OCRv6_small_rec",
+            "--paddle-cls-model-name",
+            "PP-LCNet_x0_25_textline_ori",
+        ]
+    )
+    assert ns.paddle_det_model_name == "PP-OCRv6_small_det"
+    assert ns.paddle_rec_model_name == "PP-OCRv6_small_rec"
+    assert ns.paddle_cls_model_name == "PP-LCNet_x0_25_textline_ori"
+
+
+def test_model_name_args_default_to_none():
+    parser = argparse.ArgumentParser()
+    ocrmypdf_plugin.add_options(parser)
+    ns = parser.parse_args([])
+    assert ns.paddle_det_model_name is None
+    assert ns.paddle_rec_model_name is None
+    assert ns.paddle_cls_model_name is None

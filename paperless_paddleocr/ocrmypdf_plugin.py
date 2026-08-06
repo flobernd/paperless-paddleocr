@@ -525,16 +525,42 @@ def add_options(parser: Any) -> None:
         ),
     )
     paddle.add_argument(
+        "--paddle-det-model-name",
+        metavar="NAME",
+        dest="paddle_det_model_name",
+        help=(
+            "Name of the text-detection model (e.g. PP-OCRv6_small_det). "
+            "Official models are downloaded on first use. When set, the "
+            "language setting no longer influences model selection."
+        ),
+    )
+    paddle.add_argument(
         "--paddle-det-model-dir",
         metavar="DIR",
         dest="paddle_det_model_dir",
         help="Path to a custom text-detection model directory.",
     )
     paddle.add_argument(
+        "--paddle-rec-model-name",
+        metavar="NAME",
+        dest="paddle_rec_model_name",
+        help=(
+            "Name of the text-recognition model (e.g. PP-OCRv6_small_rec). "
+            "Official models are downloaded on first use. When set, the "
+            "language setting no longer influences model selection."
+        ),
+    )
+    paddle.add_argument(
         "--paddle-rec-model-dir",
         metavar="DIR",
         dest="paddle_rec_model_dir",
         help="Path to a custom text-recognition model directory.",
+    )
+    paddle.add_argument(
+        "--paddle-cls-model-name",
+        metavar="NAME",
+        dest="paddle_cls_model_name",
+        help=("Name of the textline-orientation model (e.g. PP-LCNet_x0_25_textline_ori)."),
     )
     paddle.add_argument(
         "--paddle-cls-model-dir",
