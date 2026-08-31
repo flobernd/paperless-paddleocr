@@ -25,10 +25,9 @@ from paperless_paddleocr.paddle_engine.geometry import (
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word
 from paperless_paddleocr.paddle_engine.layout import fit_baseline
 
-try:
-    from paddleocr import PaddleOCR
-except ImportError:  # pragma: no cover - resolved at install time
-    PaddleOCR = None
+# PaddleOCR is imported lazily in ``_build_engine``: importing ``paddleocr``
+# initializes PaddleX, which must not happen while paperless is only loading
+# the parser registry.
 
 log = logging.getLogger("paperless.paddleocr.classic")
 
@@ -125,6 +124,8 @@ def _build_engine(options: Any) -> Any:
         if value:
             kwargs[paddle_kw] = value
     log.debug("PaddleOCR(classic) kwargs: %s", kwargs)
+    from paddleocr import PaddleOCR
+
     return PaddleOCR(**kwargs)
 
 

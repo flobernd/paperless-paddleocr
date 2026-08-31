@@ -11,6 +11,20 @@ engine here means PaddleOCR is only used when
 
 from __future__ import annotations
 
-from paperless_paddleocr.paddle_engine.engine import PaddleOCREngine
+from typing import Any
 
 __all__ = ["PaddleOCREngine"]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import :class:`PaddleOCREngine` on first attribute access.
+
+    Importing the engine pulls in PaddleOCR/PaddleX, which initializes
+    PaddleX. Deferring the import keeps parser-registry discovery from
+    initializing PaddleX until ``ocrmypdf`` actually needs the engine.
+    """
+    if name == "PaddleOCREngine":
+        from paperless_paddleocr.paddle_engine.engine import PaddleOCREngine
+
+        return PaddleOCREngine
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
