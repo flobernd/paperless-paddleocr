@@ -30,6 +30,7 @@ Tesseract parser. The implementation is intentionally kept close to
 from __future__ import annotations
 
 import datetime
+import functools
 import importlib.resources
 import logging
 import os
@@ -52,7 +53,13 @@ from paperless.parsers.utils import (
 )
 from PIL import Image
 
-from paperless_paddleocr import __version__
+from paperless_paddleocr import (
+    DEFAULT_ENGINE,
+    DEFAULT_VL_MODEL_NAME,
+    DEFAULT_VL_PIPELINE_VERSION,
+    ENGINE_CHOICES,
+    __version__,
+)
 from paperless_paddleocr.languages import resolve_paddle_languages
 
 if TYPE_CHECKING:
@@ -61,10 +68,6 @@ if TYPE_CHECKING:
     from paperless.parsers import MetadataEntry, ParserContext
 
 logger = logging.getLogger("paperless.parsing.paddleocr")
-
-_SRGB_ICC_DATA: Final[bytes] = (
-    importlib.resources.files("ocrmypdf.data").joinpath("sRGB.icc").read_bytes()
-)
 
 # Identical to tesseract.py - paperless-paddleocr is intended as a drop-in
 # replacement, so the supported-MIME set must match exactly.
@@ -116,6 +119,18 @@ def _env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
         )
         return default
     return raw
+
+
+def _redacted(args: dict[str, Any]) -> dict[str, Any]:
+    """The ocrmypdf kwargs with the API key masked, for the debug log."""
+    return {k: ("***" if k == "paddle_vl_api_key" else v) for k, v in args.items()}
+
+
+@functools.cache
+def _srgb_icc_data() -> bytes:
+    # Read on first use: paperless imports this module at startup, and the
+    # profile only serves the OCR_MODE=off image path.
+    return importlib.resources.files("ocrmypdf.data").joinpath("sRGB.icc").read_bytes()
 
 
 class PaperlessPaddleParser:
@@ -176,23 +191,18 @@ class PaperlessPaddleParser:
         # Plugin-specific env vars, read once per parser instance.
         self._engine: str = _env_choice(
             "PAPERLESS_PADDLEOCR_ENGINE",
-            choices=("classic-cpu", "classic-gpu", "vl-remote"),
-            default="classic-cpu",
+            choices=ENGINE_CHOICES,
+            default=DEFAULT_ENGINE,
         )
-        self._vl_server_url: str = (
-            os.environ.get("PAPERLESS_PADDLEOCR_VL_SERVER_URL", "") or ""
-        ).strip()
+        self._vl_server_url: str = os.environ.get("PAPERLESS_PADDLEOCR_VL_SERVER_URL", "").strip()
         self._vl_model_name: str = (
-            os.environ.get(
-                "PAPERLESS_PADDLEOCR_VL_MODEL_NAME",
-                "PaddleOCR-VL-1.5-0.9B",
-            )
-            or ""
-        ).strip() or "PaddleOCR-VL-1.5-0.9B"
-        self._vl_api_key: str = (os.environ.get("PAPERLESS_PADDLEOCR_VL_API_KEY", "") or "").strip()
+            os.environ.get("PAPERLESS_PADDLEOCR_VL_MODEL_NAME", "").strip() or DEFAULT_VL_MODEL_NAME
+        )
+        self._vl_api_key: str = os.environ.get("PAPERLESS_PADDLEOCR_VL_API_KEY", "").strip()
         self._vl_pipeline_version: str = (
-            os.environ.get("PAPERLESS_PADDLEOCR_VL_PIPELINE_VERSION", "") or ""
-        ).strip() or "v1.5"
+            os.environ.get("PAPERLESS_PADDLEOCR_VL_PIPELINE_VERSION", "").strip()
+            or DEFAULT_VL_PIPELINE_VERSION
+        )
         self._lang_override: str | None = (
             os.environ.get(
                 "PAPERLESS_PADDLEOCR_LANGUAGE",
@@ -266,22 +276,14 @@ class PaperlessPaddleParser:
     # ------------------------------------------------------------------
 
     def is_image(self, mime_type: str) -> bool:
-        return mime_type in {
-            "image/png",
-            "image/jpeg",
-            "image/tiff",
-            "image/bmp",
-            "image/gif",
-            "image/webp",
-            "image/heic",
-        }
+        return mime_type != "application/pdf" and mime_type in _SUPPORTED_MIME_TYPES
 
     def has_alpha(self, image: Path) -> bool:
         with Image.open(image) as im:
             return im.mode in ("RGBA", "LA")
 
     def remove_alpha(self, image_path: Path) -> Path:
-        no_alpha_image = Path(self.tempdir) / "image-no-alpha"
+        no_alpha_image = self.tempdir / "image-no-alpha"
         run_subprocess(
             [
                 settings.CONVERT_BINARY,
@@ -498,7 +500,7 @@ class PaperlessPaddleParser:
         import img2pdf
         import pikepdf
 
-        plain_pdf_path = Path(self.tempdir) / "image_plain.pdf"
+        plain_pdf_path = self.tempdir / "image_plain.pdf"
         try:
             convert_kwargs: dict = {}
             if self.settings.image_dpi is not None:
@@ -513,10 +515,10 @@ class PaperlessPaddleParser:
                 f"img2pdf conversion failed for {document_path}: {e!s}",
             ) from e
 
-        pdfa_path = Path(self.tempdir) / "archive.pdf"
+        pdfa_path = self.tempdir / "archive.pdf"
         try:
             with pikepdf.open(plain_pdf_path) as pdf:
-                cs = pdf.make_stream(_SRGB_ICC_DATA)
+                cs = pdf.make_stream(_srgb_icc_data())
                 cs["/N"] = 3
                 output_intent = pikepdf.Dictionary(
                     Type=pikepdf.Name("/OutputIntent"),
@@ -555,7 +557,7 @@ class PaperlessPaddleParser:
 
         pdfa_part = "2" if output_type == "pdfa" else output_type.split("-")[-1]
 
-        pdfmark = Path(self.tempdir) / "pdfa.ps"
+        pdfmark = self.tempdir / "pdfa.ps"
         generate_pdfa_ps(pdfmark)
 
         color_strategy = self.settings.color_conversion_strategy or "RGB"
@@ -638,7 +640,7 @@ class PaperlessPaddleParser:
                         f"Image to PDF/A conversion failed: {e!s}",
                     ) from e
                 return
-            archive_path = Path(self.tempdir) / "archive.pdf"
+            archive_path = self.tempdir / "archive.pdf"
             try:
                 self._convert_pdf_to_pdfa(document_path, archive_path)
                 self.archive_path = archive_path
@@ -658,8 +660,8 @@ class PaperlessPaddleParser:
             return
 
         # --- All other paths: run ocrmypdf with PaddleOCR plugin ---
-        archive_path = Path(self.tempdir) / "archive.pdf"
-        sidecar_file = Path(self.tempdir) / "sidecar.txt"
+        archive_path = self.tempdir / "archive.pdf"
+        sidecar_file = self.tempdir / "sidecar.txt"
 
         skip_text = self.settings.mode == ModeChoices.AUTO and original_has_text
 
@@ -686,8 +688,7 @@ class PaperlessPaddleParser:
         )
 
         try:
-            log_args = {k: ("***" if k == "paddle_vl_api_key" else v) for k, v in args.items()}
-            self.log.debug("Calling OCRmyPDF with args: %s", log_args)
+            self.log.debug("Calling OCRmyPDF with args: %s", _redacted(args))
             ocrmypdf.ocr(**args)
 
             if produce_archive:
@@ -714,8 +715,8 @@ class PaperlessPaddleParser:
                 e,
             )
 
-            archive_path_fallback = Path(self.tempdir) / "archive-fallback.pdf"
-            sidecar_file_fallback = Path(self.tempdir) / "sidecar-fallback.txt"
+            archive_path_fallback = self.tempdir / "archive-fallback.pdf"
+            sidecar_file_fallback = self.tempdir / "sidecar-fallback.txt"
 
             args = self.construct_ocrmypdf_parameters(
                 document_path,
@@ -726,10 +727,9 @@ class PaperlessPaddleParser:
             )
 
             try:
-                log_args = {k: ("***" if k == "paddle_vl_api_key" else v) for k, v in args.items()}
                 self.log.debug(
                     "Fallback: Calling OCRmyPDF with args: %s",
-                    log_args,
+                    _redacted(args),
                 )
                 ocrmypdf.ocr(**args)
                 self.text = self.extract_text(

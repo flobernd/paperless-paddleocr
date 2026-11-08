@@ -14,11 +14,19 @@ from PIL import Image
 
 from paperless_paddleocr.ocrmypdf_plugin import (
     MultiLangPaddleEngine,
+    _merged_page,
     _parse_hocr_words,
-    _Word,
-    _write_merged_hocr,
 )
 from paperless_paddleocr.paddle_engine import PaddleOCREngine
+from paperless_paddleocr.paddle_engine.hocr import Page, Word, write_document
+from paperless_paddleocr.paddle_engine.layout import reading_blocks
+
+
+def _merged_hocr(words: list[Word], hocr_lang: str) -> Page:
+    """The hOCR page a base pass would write for ``words`` on a 200x100 image."""
+    return _merged_page(
+        reading_blocks(words, bbox_of=lambda w: w.box), 200, 100, hocr_lang=hocr_lang
+    )
 
 
 def _install_fake_passes(monkeypatch, words_by_lang, fail_langs=()):
@@ -29,8 +37,12 @@ def _install_fake_passes(monkeypatch, words_by_lang, fail_langs=()):
         if lang in fail_langs:
             raise RuntimeError(f"simulated engine failure for {lang}")
         words = words_by_lang[lang]
-        _write_merged_hocr(output_hocr, words, 200, 100, hocr_lang=lang)
-        output_text.write_text(" ".join(w.text for w in words), encoding="utf-8")
+        write_document(
+            _merged_hocr(words, lang),
+            output_hocr,
+            output_text,
+            sidecar=" ".join(w.text for w in words),
+        )
 
     monkeypatch.setattr(PaddleOCREngine, "generate_hocr", staticmethod(fake))
 
@@ -52,8 +64,8 @@ def _run(tmp_path, monkeypatch, strategy, words_by_lang, fail_langs=()):
 
 def test_winner_keeps_the_higher_aggregate_confidence_language(tmp_path, monkeypatch):
     words_by_lang = {
-        "en": [_Word("cat", 0, 0, 50, 20, 60)],
-        "german": [_Word("Katze", 0, 0, 50, 20, 95)],
+        "en": [Word("cat", (0, 0, 50, 20), 60)],
+        "german": [Word("Katze", (0, 0, 50, 20), 95)],
     }
     out_hocr, out_text = _run(tmp_path, monkeypatch, "winner", words_by_lang)
     assert [w.text for w in _parse_hocr_words(out_hocr)] == ["Katze"]
@@ -64,8 +76,8 @@ def test_merge_keeps_highest_confidence_box_per_location(tmp_path, monkeypatch):
     words_by_lang = {
         # Same location: german wins on confidence. Second en word is
         # elsewhere on the page and must survive the NMS.
-        "en": [_Word("cat", 0, 0, 50, 20, 60), _Word("extra", 100, 50, 150, 70, 80)],
-        "german": [_Word("Katze", 0, 0, 50, 20, 95)],
+        "en": [Word("cat", (0, 0, 50, 20), 60), Word("extra", (100, 50, 150, 70), 80)],
+        "german": [Word("Katze", (0, 0, 50, 20), 95)],
     }
     out_hocr, _ = _run(tmp_path, monkeypatch, "merge", words_by_lang)
     assert sorted(w.text for w in _parse_hocr_words(out_hocr)) == ["Katze", "extra"]
@@ -73,7 +85,7 @@ def test_merge_keeps_highest_confidence_box_per_location(tmp_path, monkeypatch):
 
 def test_partial_language_failure_uses_surviving_passes(tmp_path, monkeypatch):
     words_by_lang = {
-        "en": [_Word("hello", 0, 0, 50, 20, 90)],
+        "en": [Word("hello", (0, 0, 50, 20), 90)],
         "german": [],  # never produced: this pass raises
     }
     out_hocr, out_text = _run(
@@ -94,8 +106,8 @@ def test_all_languages_failing_writes_empty_outputs(tmp_path, monkeypatch):
 
 def test_unknown_strategy_falls_back_to_winner(tmp_path, monkeypatch):
     words_by_lang = {
-        "en": [_Word("cat", 0, 0, 50, 20, 60)],
-        "german": [_Word("Katze", 0, 0, 50, 20, 95)],
+        "en": [Word("cat", (0, 0, 50, 20), 60)],
+        "german": [Word("Katze", (0, 0, 50, 20), 95)],
     }
     out_hocr, _ = _run(tmp_path, monkeypatch, "bogus-strategy", words_by_lang)
     assert [w.text for w in _parse_hocr_words(out_hocr)] == ["Katze"]
@@ -106,14 +118,12 @@ def _count_passes(tmp_path, monkeypatch, engine: str) -> int:
 
     def fake(input_file, output_hocr, output_text, options) -> None:
         calls.append(options.languages[0])
-        _write_merged_hocr(
+        write_document(
+            _merged_hocr([Word("x", (0, 0, 10, 10), 90)], options.languages[0]),
             output_hocr,
-            [_Word("x", 0, 0, 10, 10, 90)],
-            200,
-            100,
-            hocr_lang=options.languages[0],
+            output_text,
+            sidecar="x",
         )
-        output_text.write_text("x", encoding="utf-8")
 
     monkeypatch.setattr(PaddleOCREngine, "generate_hocr", staticmethod(fake))
     img = tmp_path / "page.png"
@@ -135,8 +145,12 @@ def test_single_language_keeps_the_engine_sidecar(tmp_path, monkeypatch):
     # The engine now writes a reading-ordered sidecar itself; the plugin
     # must not rebuild (and re-order) it from the hOCR.
     def fake(input_file, output_hocr, output_text, options) -> None:
-        _write_merged_hocr(output_hocr, [_Word("x", 0, 0, 10, 10, 90)], 200, 100, hocr_lang="en")
-        output_text.write_text("ENGINE ORDER", encoding="utf-8")
+        write_document(
+            _merged_hocr([Word("x", (0, 0, 10, 10), 90)], "en"),
+            output_hocr,
+            output_text,
+            sidecar="ENGINE ORDER",
+        )
 
     monkeypatch.setattr(PaddleOCREngine, "generate_hocr", staticmethod(fake))
     img = tmp_path / "page.png"
@@ -152,11 +166,11 @@ def test_merged_hocr_groups_words_into_lines(tmp_path):
 
     out = tmp_path / "m.hocr"
     words = [
-        _Word("hello", 0, 0, 50, 20, 90),
-        _Word("world", 60, 0, 110, 20, 90),
-        _Word("below", 0, 40, 50, 60, 90),
+        Word("hello", (0, 0, 50, 20), 90),
+        Word("world", (60, 0, 110, 20), 90),
+        Word("below", (0, 40, 50, 60), 90),
     ]
-    _write_merged_hocr(out, words, 200, 100, hocr_lang="german")
+    write_document(_merged_hocr(words, "german"), out, tmp_path / "m.txt", sidecar="")
     tree = html.parse(str(out))
     lines = tree.findall('.//{*}span[@class="ocr_line"]')
     assert len(lines) == 2  # not one line per word
