@@ -29,19 +29,26 @@ import copy
 import logging
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 from urllib.request import urlopen as _urlopen
 
 import ocrmypdf
+from ocrmypdf.exceptions import MissingDependencyError
 
+from paperless_paddleocr import (
+    DEFAULT_ENGINE,
+    DEFAULT_VL_MODEL_NAME,
+    DEFAULT_VL_PIPELINE_VERSION,
+    ENGINE_CHOICES,
+)
 from paperless_paddleocr.paddle_engine import PaddleOCREngine
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
-from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, render_hocr
-from paperless_paddleocr.paddle_engine.hocr import Word as HocrWord
+from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, write_document
 from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
+from paperless_paddleocr.paddle_engine.vl import normalize_server_url
 
 log = logging.getLogger("paperless.paddleocr.plugin")
 
@@ -59,12 +66,6 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
     Without this, a wrong URL or key surfaces only at first predict, deep
     inside a celery task, after the local pipeline is fully constructed.
     """
-    from urllib.error import HTTPError, URLError
-
-    from ocrmypdf.exceptions import MissingDependencyError
-
-    from paperless_paddleocr.paddle_engine.vl import normalize_server_url
-
     base = normalize_server_url(server_url)
     cache_key = (base, api_key)
     if cache_key in _PROBED_SERVERS:
@@ -101,34 +102,30 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
 # Multi-language merge: NMS over word boxes from per-language passes
 # ----------------------------------------------------------------------
 
+_DEFAULT_STRATEGY = "winner"
+_NMS_IOU_THRESHOLD = 0.5
+_VALID_STRATEGIES: frozenset[str] = frozenset({"merge", "winner"})
 
-@dataclass
-class _Word:
-    """A single OCR word extracted from a per-language hOCR file."""
+#: Band height for the NMS index. Any value gives the same result, since a
+#: kept word is indexed into every band it touches; one near a word height
+#: keeps each band's list short.
+_NMS_BAND_PX = 32
 
-    text: str
-    x0: int
-    y0: int
-    x1: int
-    y1: int
-    conf: int  # 0–100
 
-    @property
-    def area(self) -> int:
-        return max(0, self.x1 - self.x0) * max(0, self.y1 - self.y0)
-
-    def iou(self, other: _Word) -> float:
-        ix0 = max(self.x0, other.x0)
-        iy0 = max(self.y0, other.y0)
-        ix1 = min(self.x1, other.x1)
-        iy1 = min(self.y1, other.y1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            return 0.0
-        inter = (ix1 - ix0) * (iy1 - iy0)
-        union = self.area + other.area - inter
-        if union <= 0:
-            return 0.0
-        return inter / union
+def _read_strategy() -> str:
+    raw = os.environ.get("PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY", "").strip().lower()
+    if not raw:
+        return _DEFAULT_STRATEGY
+    if raw not in _VALID_STRATEGIES:
+        log.warning(
+            "Unknown PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY=%r; "
+            "falling back to %r. Valid values: %s",
+            raw,
+            _DEFAULT_STRATEGY,
+            sorted(_VALID_STRATEGIES),
+        )
+        return _DEFAULT_STRATEGY
+    return raw
 
 
 class MultiLangPaddleEngine(PaddleOCREngine):
@@ -146,26 +143,6 @@ class MultiLangPaddleEngine(PaddleOCREngine):
     * ``merge`` - NMS-merge word boxes from all languages by confidence.
       Right choice for genuinely mixed-script pages.
     """
-
-    NMS_IOU_THRESHOLD: float = 0.5
-    DEFAULT_STRATEGY: str = "winner"
-    VALID_STRATEGIES: frozenset[str] = frozenset({"winner", "merge"})
-
-    @staticmethod
-    def _read_strategy() -> str:
-        raw = (os.environ.get("PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY", "") or "").strip().lower()
-        if not raw:
-            return MultiLangPaddleEngine.DEFAULT_STRATEGY
-        if raw not in MultiLangPaddleEngine.VALID_STRATEGIES:
-            log.warning(
-                "Unknown PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY=%r; "
-                "falling back to %r. Valid values: %s",
-                raw,
-                MultiLangPaddleEngine.DEFAULT_STRATEGY,
-                sorted(MultiLangPaddleEngine.VALID_STRATEGIES),
-            )
-            return MultiLangPaddleEngine.DEFAULT_STRATEGY
-        return raw
 
     @staticmethod
     def generate_hocr(
@@ -199,7 +176,7 @@ class MultiLangPaddleEngine(PaddleOCREngine):
             )
             return
 
-        strategy = MultiLangPaddleEngine._read_strategy()
+        strategy = _read_strategy()
         log.info(
             "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
             input_file,
@@ -209,110 +186,115 @@ class MultiLangPaddleEngine(PaddleOCREngine):
         )
 
         page_w, page_h = _read_page_size(input_file)
+        per_lang_words = _run_passes(input_file, output_hocr, output_text, options, langs)
+        if per_lang_words:
+            merged, primary = _select(strategy, per_lang_words, langs)
+        else:
+            log.warning(
+                "All %d per-language PaddleOCR passes failed for %s; writing empty sidecar.",
+                len(langs),
+                input_file,
+            )
+            merged, primary = [], langs[0]
 
-        per_lang_words: dict[str, list[_Word]] = {}
-        failed_langs: list[str] = []
-        tmp_files: list[Path] = []
-        try:
-            for lang in langs:
-                sub_options = copy.copy(options)
-                sub_options.languages = [lang]
+        blocks = reading_blocks(merged, bbox_of=lambda w: w.box)
+        write_document(
+            _merged_page(blocks, page_w, page_h, hocr_lang=primary),
+            output_hocr,
+            output_text,
+            sidecar=_blocks_to_text(blocks),
+        )
 
-                tmp_hocr = output_hocr.with_name(
-                    f"{output_hocr.stem}.{lang}.hocr",
-                )
-                tmp_text = output_text.with_name(
-                    f"{output_text.stem}.{lang}.txt",
-                )
-                tmp_files.extend([tmp_hocr, tmp_text])
 
-                try:
-                    PaddleOCREngine.generate_hocr(
-                        input_file,
-                        tmp_hocr,
-                        tmp_text,
-                        sub_options,
-                    )
-                except Exception:
-                    failed_langs.append(lang)
-                    log.exception(
-                        "PaddleOCR pass for lang=%s on %s failed; continuing.",
-                        lang,
-                        input_file,
-                    )
-                    continue
+def _run_passes(
+    input_file: Path,
+    output_hocr: Path,
+    output_text: Path,
+    options: Any,
+    langs: list[str],
+) -> dict[str, list[Word]]:
+    """Run the base engine once per language and collect each pass's words.
 
-                try:
-                    lang_words = _parse_hocr_words(tmp_hocr)
-                except Exception:
-                    failed_langs.append(lang)
-                    log.exception(
-                        "Failed to parse temp hOCR %s; skipping.",
-                        tmp_hocr,
-                    )
-                    continue
+    A pass that raises, or whose hOCR cannot be parsed, is logged and
+    skipped so the surviving languages still produce a document.
+    """
+    per_lang_words: dict[str, list[Word]] = {}
+    failed_langs: list[str] = []
+    tmp_files: list[Path] = []
+    try:
+        for lang in langs:
+            sub_options = copy.copy(options)
+            sub_options.languages = [lang]
 
-                log.debug("lang=%s: %d words", lang, len(lang_words))
-                per_lang_words[lang] = lang_words
+            tmp_hocr = output_hocr.with_name(f"{output_hocr.stem}.{lang}.hocr")
+            tmp_text = output_text.with_name(f"{output_text.stem}.{lang}.txt")
+            tmp_files.extend([tmp_hocr, tmp_text])
 
-            if failed_langs:
-                log.info(
-                    "%d/%d per-language passes succeeded (failed: %s).",
-                    len(per_lang_words),
-                    len(langs),
-                    ", ".join(failed_langs),
-                )
-
-            if not per_lang_words:
-                log.warning(
-                    "All %d per-language PaddleOCR passes failed for %s; writing empty sidecar.",
-                    len(langs),
+            try:
+                PaddleOCREngine.generate_hocr(input_file, tmp_hocr, tmp_text, sub_options)
+            except Exception:
+                failed_langs.append(lang)
+                log.exception(
+                    "PaddleOCR pass for lang=%s on %s failed; continuing.",
+                    lang,
                     input_file,
                 )
-                _write_merged_hocr(
-                    output_hocr,
-                    [],
-                    page_w,
-                    page_h,
-                    hocr_lang=langs[0],
-                )
-                output_text.write_text("", encoding="utf-8")
-                return
-        finally:
-            for tmp in tmp_files:
-                if tmp.exists():
-                    tmp.unlink()
+                continue
 
-        if strategy == "winner":
-            by_lang_conf = {
-                lang: sum(w.conf for w in words) for lang, words in per_lang_words.items()
-            }
-            winner_lang = max(by_lang_conf, key=lambda k: by_lang_conf[k])
-            merged = per_lang_words[winner_lang]
-            primary = winner_lang
+            try:
+                lang_words = _parse_hocr_words(tmp_hocr)
+            except Exception:
+                failed_langs.append(lang)
+                log.exception("Failed to parse temp hOCR %s; skipping.", tmp_hocr)
+                continue
+
+            log.debug("lang=%s: %d words", lang, len(lang_words))
+            per_lang_words[lang] = lang_words
+
+        if failed_langs:
             log.info(
-                "multi-lang winner: %s (score=%d, %d words). Other scores: %s",
-                winner_lang,
-                by_lang_conf[winner_lang],
-                len(merged),
-                {lang: s for lang, s in by_lang_conf.items() if lang != winner_lang},
-            )
-        else:  # merge
-            flat = [w for words in per_lang_words.values() for w in words]
-            merged = _nms_merge(flat, MultiLangPaddleEngine.NMS_IOU_THRESHOLD)
-            primary = langs[0]
-            log.debug(
-                "merge: %d total words from %d languages → %d after NMS",
-                len(flat),
+                "%d/%d per-language passes succeeded (failed: %s).",
                 len(per_lang_words),
-                len(merged),
+                len(langs),
+                ", ".join(failed_langs),
             )
+    finally:
+        for tmp in tmp_files:
+            if tmp.exists():
+                tmp.unlink()
+    return per_lang_words
 
-        _write_merged_hocr(output_hocr, merged, page_w, page_h, hocr_lang=primary)
-        output_text.write_text(
-            _words_to_text(merged),
-            encoding="utf-8",
+
+def _select(
+    strategy: str,
+    per_lang_words: dict[str, list[Word]],
+    langs: list[str],
+) -> tuple[list[Word], str]:
+    """Words to emit, and the language the merged hOCR is labelled with."""
+    if strategy == "winner":
+        by_lang_conf = {
+            lang: sum(w.confidence for w in words) for lang, words in per_lang_words.items()
+        }
+        winner_lang = max(by_lang_conf, key=lambda k: by_lang_conf[k])
+        merged = per_lang_words[winner_lang]
+        log.info(
+            "multi-lang winner: %s (score=%d, %d words). Other scores: %s",
+            winner_lang,
+            by_lang_conf[winner_lang],
+            len(merged),
+            {lang: s for lang, s in by_lang_conf.items() if lang != winner_lang},
         )
+        return merged, winner_lang
+
+    flat = [w for words in per_lang_words.values() for w in words]
+    merged = _nms_merge(flat, _NMS_IOU_THRESHOLD)
+    log.debug(
+        "merge: %d total words from %d languages → %d after NMS",
+        len(flat),
+        len(per_lang_words),
+        len(merged),
+    )
+    return merged, langs[0]
 
 
 # ----------------------------------------------------------------------
@@ -328,7 +310,7 @@ def _read_page_size(image_path: Path) -> tuple[int, int]:
         return img.size
 
 
-def _parse_hocr_words(hocr_path: Path) -> list[_Word]:
+def _parse_hocr_words(hocr_path: Path) -> list[Word]:
     """Extract every ``ocrx_word`` span from an hOCR file."""
     from lxml import html
 
@@ -337,7 +319,7 @@ def _parse_hocr_words(hocr_path: Path) -> list[_Word]:
     # on this path), and no_network=True blocks any external fetch.
     parser = html.HTMLParser(no_network=True)
 
-    words: list[_Word] = []
+    words: list[Word] = []
     tree = html.parse(str(hocr_path), parser=parser)
     for span in tree.iter("span"):
         cls = (span.get("class") or "").split()
@@ -352,78 +334,75 @@ def _parse_hocr_words(hocr_path: Path) -> list[_Word]:
         text = "".join(span.itertext()).strip()
         if not text:
             continue
-        words.append(
-            _Word(
-                text=text,
-                x0=int(bbox_m.group(1)),
-                y0=int(bbox_m.group(2)),
-                x1=int(bbox_m.group(3)),
-                y1=int(bbox_m.group(4)),
-                conf=conf,
-            ),
+        box = (
+            int(bbox_m.group(1)),
+            int(bbox_m.group(2)),
+            int(bbox_m.group(3)),
+            int(bbox_m.group(4)),
         )
+        words.append(Word(text, box, conf))
     return words
 
 
-def _word_bbox(w: _Word) -> BBox:
-    """Adapter: expose a plugin :class:`_Word` as a layout ``BBox``.
+def _iou(a: BBox, b: BBox) -> float:
+    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    inter = (ix1 - ix0) * (iy1 - iy0)
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return inter / (area_a + area_b - inter)
 
-    The ``layout`` reconstruction functions are generic over the caller's
-    word type; this bridges the multi-language merge's axis-aligned
-    :class:`_Word` to them. ``baseline_of`` is left to default (the bbox
-    bottom edge), which is exact for these already axis-aligned boxes.
-    """
-    return (w.x0, w.y0, w.x1, w.y1)
 
-
-def _words_to_text(words: list[_Word]) -> str:
-    """Render OCR words to plain text in banded reading order.
+def _blocks_to_text(blocks: list[list[list[Word]]]) -> str:
+    """Render reading-ordered blocks to plain text.
 
     Blocks come from :func:`layout.reading_blocks` (column bands plus
     full-width flow); lines are space-joined, blocks blank-line-separated so
     downstream consumers (paperless UI, full-text indexer) see paragraphs.
     """
-    if not words:
-        return ""
     return "\n\n".join(
-        "\n".join(" ".join(w.text for w in line) for line in block)
-        for block in reading_blocks(words, bbox_of=_word_bbox)
+        "\n".join(" ".join(w.text for w in line) for line in block) for block in blocks
     )
 
 
-def _nms_merge(words: list[_Word], iou_threshold: float) -> list[_Word]:
+def _nms_merge(words: list[Word], iou_threshold: float) -> list[Word]:
     """Greedy NMS by descending confidence, then re-order for reading.
 
     Surviving words are re-sequenced through :func:`layout.reading_blocks`
     so the merged hOCR and sidecar read in banded reading order:
     column bands left-to-right, lines top-to-bottom within each band.
     """
-    if not words:
-        return []
-
-    by_conf = sorted(words, key=lambda w: w.conf, reverse=True)
-    kept: list[_Word] = []
-    for candidate in by_conf:
-        if any(candidate.iou(k) >= iou_threshold for k in kept):
+    # Kept words are indexed by the horizontal bands they touch. IoU is zero
+    # for vertically disjoint boxes, so a candidate only needs the kept words
+    # of its own bands and the outcome matches a scan over all of them.
+    bands: dict[int, list[Word]] = {}
+    kept: list[Word] = []
+    for candidate in sorted(words, key=lambda w: w.confidence, reverse=True):
+        _x0, y0, _x1, y1 = candidate.box
+        touched = range(min(y0, y1) // _NMS_BAND_PX, max(y0, y1) // _NMS_BAND_PX + 1)
+        if any(
+            _iou(candidate.box, k.box) >= iou_threshold for b in touched for k in bands.get(b, ())
+        ):
             continue
         kept.append(candidate)
+        for b in touched:
+            bands.setdefault(b, []).append(candidate)
 
-    ordered: list[_Word] = []
-    for block in reading_blocks(kept, bbox_of=_word_bbox):
-        for line in block:
-            ordered.extend(line)
-    return ordered
+    return [
+        w for block in reading_blocks(kept, bbox_of=lambda w: w.box) for line in block for w in line
+    ]
 
 
-def _write_merged_hocr(
-    output_hocr: Path,
-    words: list[_Word],
+def _merged_page(
+    blocks: list[list[list[Word]]],
     page_w: int,
     page_h: int,
     *,
     hocr_lang: str,
-) -> None:
-    """Render merged words as a standard Page so the hOCR carries real lines.
+) -> Page:
+    """Page from reading-ordered blocks, so the merged hOCR carries real lines.
 
     Grouped lines (rather than one line per word) give ocrmypdf's renderer
     line-level baselines and give PDF viewers sane text selection.
@@ -434,21 +413,21 @@ def _write_merged_hocr(
         lang=hocr_lang,
         ocr_system="paperless-paddleocr multi-lang merge",
     )
-    for block in reading_blocks(words, bbox_of=_word_bbox):
+    for block in blocks:
         for line_words in block:
-            box = union_boxes(_word_bbox(w) for w in line_words)
+            box = union_boxes(w.box for w in line_words)
             line = Line(
                 box=box,
-                confidence=round(sum(w.conf for w in line_words) / len(line_words)),
+                confidence=round(sum(w.confidence for w in line_words) / len(line_words)),
                 text=" ".join(w.text for w in line_words),
-                words=[HocrWord(w.text, _word_bbox(w), w.conf) for w in line_words],
+                words=list(line_words),
                 baseline=fit_hocr_baseline(
-                    [((w.x0 + w.x1) / 2.0, float(w.y1)) for w in line_words],
+                    [((w.box[0] + w.box[2]) / 2.0, float(w.box[3])) for w in line_words],
                     box,
                 ),
             )
             page.blocks.append(Block(box=box, lines=[line]))
-    output_hocr.write_text(render_hocr(page), encoding="utf-8")
+    return page
 
 
 # ----------------------------------------------------------------------
@@ -470,8 +449,8 @@ def add_options(parser: Any) -> None:
     )
     paddle.add_argument(
         "--paddle-engine",
-        choices=["classic-cpu", "classic-gpu", "vl-remote"],
-        default="classic-cpu",
+        choices=ENGINE_CHOICES,
+        default=DEFAULT_ENGINE,
         dest="paddle_engine",
         help=(
             "OCR engine variant: 'classic-cpu' (default, fast CNN pipeline on "
@@ -490,12 +469,12 @@ def add_options(parser: Any) -> None:
     )
     paddle.add_argument(
         "--paddle-vl-model-name",
-        default="PaddleOCR-VL-1.5-0.9B",
+        default=DEFAULT_VL_MODEL_NAME,
         dest="paddle_vl_model_name",
         metavar="NAME",
         help=(
             "vl-remote: model name advertised by the inference server "
-            "(default: PaddleOCR-VL-1.5-0.9B)."
+            f"(default: {DEFAULT_VL_MODEL_NAME})."
         ),
     )
     paddle.add_argument(
@@ -510,13 +489,13 @@ def add_options(parser: Any) -> None:
     )
     paddle.add_argument(
         "--paddle-vl-pipeline-version",
-        default="v1.5",
+        default=DEFAULT_VL_PIPELINE_VERSION,
         dest="paddle_vl_pipeline_version",
         metavar="VERSION",
         help=(
             "vl-remote: PaddleOCR-VL pipeline version (v1, v1.5, v1.6). Must "
             "match the model family the inference server serves "
-            "(default: v1.5)."
+            f"(default: {DEFAULT_VL_PIPELINE_VERSION})."
         ),
     )
     paddle.add_argument(
@@ -565,22 +544,17 @@ def add_options(parser: Any) -> None:
     )
 
 
-_VALID_ENGINES: frozenset[str] = frozenset({"classic-cpu", "classic-gpu", "vl-remote"})
-
-
 @ocrmypdf.hookimpl
 def check_options(options: Any) -> None:
     """Validate that the requested PaddleOCR engine variant is installed."""
-    from ocrmypdf.exceptions import MissingDependencyError
-
-    engine = getattr(options, "paddle_engine", "classic-cpu")
-    if engine not in _VALID_ENGINES:
+    engine = getattr(options, "paddle_engine", DEFAULT_ENGINE)
+    if engine not in ENGINE_CHOICES:
         # argparse validates --paddle-engine via `choices=` on CLI usage, but
         # the Python API (ocrmypdf.ocr(paddle_engine=…)) skips that check.
         # Validate explicitly so an unknown engine fails fast rather than
         # silently falling through to classic-cpu.
         raise ValueError(
-            f"Unknown paddle_engine={engine!r}. Valid choices: {sorted(_VALID_ENGINES)}.",
+            f"Unknown paddle_engine={engine!r}. Valid choices: {list(ENGINE_CHOICES)}.",
         )
 
     if engine == "vl-remote":

@@ -20,12 +20,10 @@ import types
 
 from PIL import Image
 
-from paperless_paddleocr.ocrmypdf_plugin import (
-    MultiLangPaddleEngine,
-    _Word,
-    _write_merged_hocr,
-)
+from paperless_paddleocr.ocrmypdf_plugin import MultiLangPaddleEngine, _merged_page
 from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl
+from paperless_paddleocr.paddle_engine.hocr import Word, write_document
+from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
 
 def _tiny_png(path):
@@ -46,11 +44,16 @@ def test_generate_pdf_dispatches_and_renders_textonly_pdf(tmp_path, monkeypatch)
         # real (not stubbed).
         calls.append("multilang")
         words = [
-            _Word("hallo", 4, 4, 54, 30, 95),
-            _Word("welt", 60, 4, 110, 30, 93),
+            Word("hallo", (4, 4, 54, 30), 95),
+            Word("welt", (60, 4, 110, 30), 93),
         ]
-        _write_merged_hocr(output_hocr, words, 120, 40, hocr_lang="german")
-        output_text.write_text("hallo welt", encoding="utf-8")
+        blocks = reading_blocks(words, bbox_of=lambda w: w.box)
+        write_document(
+            _merged_page(blocks, 120, 40, hocr_lang="german"),
+            output_hocr,
+            output_text,
+            sidecar="hallo welt",
+        )
 
     def fake_base_classic(*a, **k):
         calls.append("base_classic")

@@ -231,22 +231,6 @@ def first_paddle_lang(languages: Iterable[str] | None) -> str:
     return TESSERACT_TO_PADDLE.get(code, code)
 
 
-# Native PaddleOCR codes (including multilingual scripts) that users can pass
-# via PAPERLESS_PADDLEOCR_LANGUAGE without going through the tesseract mapping.
-# Used only for documentation/validation; resolve_paddle_languages passes the
-# override through unchanged.
-PADDLE_NATIVE: Final[frozenset[str]] = frozenset(
-    {
-        *PADDLE_VALID_LANGS,
-        # 2.x-era script bundles, still accepted via normalize_paddle_lang().
-        "ml",
-        "latin",
-        "arabic",
-        "cyrillic",
-        "devanagari",
-    },
-)
-
 # PaddleOCR 3.x dropped the 2.x script-bundle codes. Any member language of a
 # script group selects that group's recognition model, so each bundle maps to
 # a representative member; "cyrillic" deliberately avoids "ru", which 3.x
@@ -261,6 +245,13 @@ _SCRIPT_BUNDLES: Final[dict[str, str | None]] = {
     "devanagari": "hi",
 }
 
+# Native PaddleOCR codes that users can pass via PAPERLESS_PADDLEOCR_LANGUAGE
+# without going through the tesseract mapping, including the 2.x-era script
+# bundles that normalize_paddle_lang() still accepts. Used only for
+# documentation/validation; resolve_paddle_languages passes the override
+# through unchanged.
+PADDLE_NATIVE: Final[frozenset[str]] = frozenset({*PADDLE_VALID_LANGS, *_SCRIPT_BUNDLES})
+
 
 def normalize_paddle_lang(code: str) -> str | None:
     """Translate a user-facing PaddleOCR code to a valid 3.x ``lang=`` value.
@@ -268,96 +259,29 @@ def normalize_paddle_lang(code: str) -> str | None:
     Returns ``None`` when the engine should omit the ``lang`` kwarg entirely.
     """
     cleaned = code.strip().lower()
-    if cleaned in _SCRIPT_BUNDLES:
-        return _SCRIPT_BUNDLES[cleaned]
-    return cleaned
+    return _SCRIPT_BUNDLES.get(cleaned, cleaned)
 
 
 # Best-effort PaddleOCR code → BCP-47 (ISO 639-1) for the hOCR ``lang``
 # attribute. Both the single-language path (paddle_engine) and the merged
 # multi-language path (ocrmypdf_plugin) route through :func:`to_hocr_lang`
 # so the emitted ``lang`` is identical and standards-valid regardless of
-# which path produced the hOCR. Multilingual/script bundles (``ml``,
-# ``latin``, ``arabic``, ``cyrillic``, ``devanagari``) have no single
-# language and map to the BCP-47 "undetermined" subtag.
-_PADDLE_TO_BCP47: Final[dict[str, str]] = {
-    "en": "en",
-    "german": "de",
-    "fr": "fr",
-    "it": "it",
-    "pt": "pt",
-    "ru": "ru",
-    "ar": "ar",
-    "japan": "ja",
-    "korean": "ko",
+# which path produced the hOCR. Every TESSERACT_TO_PADDLE target is covered:
+# the two-letter codes are already ISO 639-1 and PaddleOCR's own names are
+# renamed below. Multilingual/script bundles (``ml``, ``latin``, ``arabic``,
+# ``cyrillic``, ``devanagari``) have no single language and map to the
+# BCP-47 "undetermined" subtag.
+_BCP47_RENAMES: Final[dict[str, str]] = {
     "ch": "zh",
     "chinese_cht": "zh",
-    "vi": "vi",
-    "hi": "hi",
-    "th": "th",
-    "tr": "tr",
-    "nl": "nl",
-    "sv": "sv",
-    "da": "da",
-    "no": "no",
-    "fi": "fi",
-    "pl": "pl",
-    "cs": "cs",
-    "hu": "hu",
-    "ro": "ro",
-    "uk": "uk",
-    "el": "el",
-    # Newly mapped codes; same best-effort ISO 639-1 policy as above.
-    "es": "es",
-    "af": "af",
-    "az": "az",
-    "be": "be",
-    "bg": "bg",
-    "bs": "bs",
-    "ca": "ca",
-    "cy": "cy",
-    "et": "et",
-    "eu": "eu",
-    "fa": "fa",
-    "ga": "ga",
-    "gl": "gl",
-    "hr": "hr",
-    "id": "id",
-    "is": "is",
-    "ka": "ka",
-    "kk": "kk",
-    "ky": "ky",
-    "ku": "ku",
-    "la": "la",
-    "lb": "lb",
-    "lt": "lt",
-    "lv": "lv",
-    "mi": "mi",
-    "mk": "mk",
-    "mn": "mn",
-    "mr": "mr",
-    "ms": "ms",
-    "mt": "mt",
-    "ne": "ne",
-    "oc": "oc",
-    "ps": "ps",
-    "qu": "qu",
-    "sa": "sa",
-    "sd": "sd",
-    "sk": "sk",
-    "sl": "sl",
-    "sq": "sq",
-    "sw": "sw",
-    "ta": "ta",
-    "te": "te",
-    "tg": "tg",
-    "tl": "tl",
-    "tt": "tt",
-    "ug": "ug",
-    "ur": "ur",
-    "uz": "uz",
+    "german": "de",
+    "japan": "ja",
+    "korean": "ko",
     "rs_cyrillic": "sr",
     "rs_latin": "sr",
+}
+_PADDLE_TO_BCP47: Final[dict[str, str]] = {
+    code: _BCP47_RENAMES.get(code, code) for code in TESSERACT_TO_PADDLE.values()
 }
 
 
@@ -413,7 +337,6 @@ def resolve_paddle_languages(
         return ["en"]
 
     mapped: list[str] = []
-    seen: set[str] = set()
     for tess in _split_langs(paperless_lang):
         paddle = TESSERACT_TO_PADDLE.get(tess.lower())
         if paddle is None:
@@ -423,10 +346,8 @@ def resolve_paddle_languages(
                 tess,
             )
             continue
-        if paddle in seen:
-            continue
-        seen.add(paddle)
-        mapped.append(paddle)
+        if paddle not in mapped:
+            mapped.append(paddle)
 
     if not mapped:
         logger.warning(
