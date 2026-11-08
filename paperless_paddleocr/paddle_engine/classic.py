@@ -16,14 +16,10 @@ from typing import Any
 
 from PIL import Image
 
-from paperless_paddleocr.languages import TESSERACT_TO_PADDLE, normalize_paddle_lang
-from paperless_paddleocr.paddle_engine.geometry import (
-    BBox,
-    estimate_word_boxes,
-    poly_to_bbox,
-)
-from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word
-from paperless_paddleocr.paddle_engine.layout import fit_baseline
+from paperless_paddleocr.languages import first_paddle_lang, normalize_paddle_lang
+from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
+from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, words_from_text
+from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline
 
 try:
     from paddleocr import PaddleOCR
@@ -43,17 +39,23 @@ _CACHE_LOCK = threading.Lock()
 _ENGINE_CACHE: dict[tuple[Any, ...], Any] = {}
 _PREDICT_LOCK = threading.Lock()
 
+#: ``(option attribute, PaddleOCR kwarg)`` per model override, in the order
+#: the constructor kwargs are passed and logged.
+_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("paddle_det_model_name", "text_detection_model_name"),
+    ("paddle_det_model_dir", "text_detection_model_dir"),
+    ("paddle_rec_model_name", "text_recognition_model_name"),
+    ("paddle_rec_model_dir", "text_recognition_model_dir"),
+    ("paddle_cls_model_name", "textline_orientation_model_name"),
+    ("paddle_cls_model_dir", "textline_orientation_model_dir"),
+)
+
 
 def _engine_key(options: Any) -> tuple[Any, ...]:
     return (
         _resolve_lang(options),
         _resolve_device(options),
-        getattr(options, "paddle_det_model_name", None),
-        getattr(options, "paddle_rec_model_name", None),
-        getattr(options, "paddle_cls_model_name", None),
-        getattr(options, "paddle_det_model_dir", None),
-        getattr(options, "paddle_rec_model_dir", None),
-        getattr(options, "paddle_cls_model_dir", None),
+        *(getattr(options, attr, None) for attr, _ in _MODEL_OPTIONS),
     )
 
 
@@ -68,17 +70,7 @@ def _get_engine(options: Any) -> Any:
 
 
 def _resolve_lang(options: Any) -> str:
-    """First requested language as a PaddleOCR code.
-
-    The paperless parser already translates Tesseract codes; the
-    ``TESSERACT_TO_PADDLE`` lookup here is a defensive fallback for a code
-    that slipped through untranslated.
-    """
-    langs = list(getattr(options, "languages", None) or [])
-    if not langs:
-        return "en"
-    code = str(langs[0]).strip().lower()
-    return TESSERACT_TO_PADDLE.get(code, code)
+    return first_paddle_lang(getattr(options, "languages", None))
 
 
 def _resolve_device(options: Any) -> str:
@@ -113,14 +105,7 @@ def _build_engine(options: Any) -> Any:
         # 2026-07-03), so the workaround stays. The GPU path doesn't touch
         # OneDNN, so it is CPU-only.
         kwargs["enable_mkldnn"] = False
-    for opt_attr, paddle_kw in (
-        ("paddle_det_model_name", "text_detection_model_name"),
-        ("paddle_det_model_dir", "text_detection_model_dir"),
-        ("paddle_rec_model_name", "text_recognition_model_name"),
-        ("paddle_rec_model_dir", "text_recognition_model_dir"),
-        ("paddle_cls_model_name", "textline_orientation_model_name"),
-        ("paddle_cls_model_dir", "textline_orientation_model_dir"),
-    ):
+    for opt_attr, paddle_kw in _MODEL_OPTIONS:
         value = getattr(options, opt_attr, None)
         if value:
             kwargs[paddle_kw] = value
@@ -176,32 +161,17 @@ def _merge_subtokens(
 
 
 def _word_box(boxes: list[Any], sx: float, sy: float) -> BBox:
-    xs: list[int] = []
-    tops: list[int] = []
-    bottoms: list[int] = []
-    for box in boxes:
-        bx0, by0, bx1, by1 = poly_to_bbox(_scaled(box, sx, sy))
-        xs += [bx0, bx1]
-        tops.append(by0)
-        bottoms.append(by1)
-    return min(xs), min(tops), max(xs), max(bottoms)
+    return union_boxes(poly_to_bbox(_scaled(box, sx, sy)) for box in boxes)
 
 
 def _region_baseline(words: list[Word], region_box: BBox) -> tuple[float, float]:
     """Fit a straight baseline for a one-line region from its word boxes.
 
     Classic PaddleOCR returns one detection region per line, so a region's
-    words share a baseline. Returns ``(slope, constant)`` in hOCR-relative
-    form: ``constant`` is the fitted baseline's y at the region's left edge
-    measured up from the region's bottom. A region with no words gets a
-    flat baseline on the box bottom.
+    words share a baseline.
     """
     points = [((w.box[0] + w.box[2]) / 2.0, float(w.box[3])) for w in words]
-    if not points:
-        return 0.0, 0.0
-    slope, intercept = fit_baseline(points)
-    rx0, _ry0, _rx1, ry1 = region_box
-    return slope, slope * rx0 + intercept - ry1
+    return fit_hocr_baseline(points, region_box)
 
 
 def build_page(input_file: Path, options: Any) -> Page:
@@ -235,21 +205,19 @@ def build_page(input_file: Path, options: Any) -> Page:
         region_box = poly_to_bbox(_scaled(poly, sx, sy))
         conf = int(float(score) * 100)
 
-        words: list[Word] = []
         if (
-            has_word_boxes
-            and idx < len(token_lines)
+            idx < len(token_lines)
             and idx < len(token_boxes)
             and token_lines[idx]
             and token_boxes[idx]
         ):
-            for w_text, w_boxes in _merge_subtokens(token_lines[idx], token_boxes[idx]):
-                if w_text:
-                    words.append(Word(w_text, _word_box(w_boxes, sx, sy), conf))
+            words = [
+                Word(w_text, _word_box(w_boxes, sx, sy), conf)
+                for w_text, w_boxes in _merge_subtokens(token_lines[idx], token_boxes[idx])
+                if w_text
+            ]
         else:
-            tokens = text.split()
-            for w_text, box in zip(tokens, estimate_word_boxes(tokens, region_box), strict=False):
-                words.append(Word(w_text, box, conf))
+            words = words_from_text(text, region_box, conf)
 
         line = Line(
             box=region_box,

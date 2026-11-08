@@ -38,10 +38,10 @@ from urllib.request import urlopen as _urlopen
 import ocrmypdf
 
 from paperless_paddleocr.paddle_engine import PaddleOCREngine
-from paperless_paddleocr.paddle_engine.geometry import BBox
+from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, render_hocr
 from paperless_paddleocr.paddle_engine.hocr import Word as HocrWord
-from paperless_paddleocr.paddle_engine.layout import fit_baseline, reading_blocks
+from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
 
 log = logging.getLogger("paperless.paddleocr.plugin")
 
@@ -436,21 +436,16 @@ def _write_merged_hocr(
     )
     for block in reading_blocks(words, bbox_of=_word_bbox):
         for line_words in block:
-            box = (
-                min(w.x0 for w in line_words),
-                min(w.y0 for w in line_words),
-                max(w.x1 for w in line_words),
-                max(w.y1 for w in line_words),
-            )
-            slope, intercept = fit_baseline(
-                [((w.x0 + w.x1) / 2.0, float(w.y1)) for w in line_words],
-            )
+            box = union_boxes(_word_bbox(w) for w in line_words)
             line = Line(
                 box=box,
                 confidence=round(sum(w.conf for w in line_words) / len(line_words)),
                 text=" ".join(w.text for w in line_words),
-                words=[HocrWord(w.text, (w.x0, w.y0, w.x1, w.y1), w.conf) for w in line_words],
-                baseline=(slope, slope * box[0] + intercept - box[3]),
+                words=[HocrWord(w.text, _word_bbox(w), w.conf) for w in line_words],
+                baseline=fit_hocr_baseline(
+                    [((w.x0 + w.x1) / 2.0, float(w.y1)) for w in line_words],
+                    box,
+                ),
             )
             page.blocks.append(Block(box=box, lines=[line]))
     output_hocr.write_text(render_hocr(page), encoding="utf-8")

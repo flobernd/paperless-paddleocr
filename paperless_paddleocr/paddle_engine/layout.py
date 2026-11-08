@@ -18,11 +18,12 @@ type via two adapter callables, so neither :mod:`vl` nor
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from paperless_paddleocr.paddle_engine.geometry import BBox
+from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
 
 #: A word's vertical band may stick out of its row's band by this fraction
 #: of the row height and still join it. Tesseract ``textord_overlap_x``.
@@ -42,6 +43,11 @@ MIN_GUTTER_RATIO = 0.04
 
 #: Absolute floor for a gutter width, in pixels.
 MIN_GUTTER_PX = 8
+
+
+def gutter_width(span_x0: int, span_x1: int) -> int:
+    """Gap a column gutter must reach for text spanning ``[span_x0, span_x1]``."""
+    return max(MIN_GUTTER_PX, int((span_x1 - span_x0) * MIN_GUTTER_RATIO))
 
 
 def fit_baseline(points: Sequence[tuple[float, float]]) -> tuple[float, float]:
@@ -66,6 +72,19 @@ def fit_baseline(points: Sequence[tuple[float, float]]) -> tuple[float, float]:
     slope = (n * sxy - sx * sy) / denom
     intercept = (sy - slope * sx) / n
     return slope, intercept
+
+
+def fit_hocr_baseline(points: Sequence[tuple[float, float]], box: BBox) -> tuple[float, float]:
+    """Fit ``points`` and express the baseline relative to ``box`` as hOCR does.
+
+    Returns ``(slope, constant)`` where ``constant`` is the fitted y at the
+    box's left edge, measured up from the box bottom. No points gives a flat
+    baseline on the box bottom.
+    """
+    if not points:
+        return 0.0, 0.0
+    slope, intercept = fit_baseline(points)
+    return slope, slope * box[0] + intercept - box[3]
 
 
 @dataclass
@@ -110,12 +129,7 @@ class _Row:
         """Recompute the vertical band and baseline fit from current members."""
         self.y0 = float(min(s.bbox[1] for s in self.spans))
         self.y1 = float(max(s.bbox[3] for s in self.spans))
-        if len(self.spans) >= 2:
-            self.slope, self.intercept = fit_baseline(
-                [(s.x_center, s.baseline_y) for s in self.spans],
-            )
-        else:
-            self.slope, self.intercept = 0.0, self.spans[0].baseline_y
+        self.slope, self.intercept = fit_baseline([(s.x_center, s.baseline_y) for s in self.spans])
 
     def predict(self, x: float) -> float:
         """Baseline y predicted at horizontal position ``x``."""
@@ -208,8 +222,8 @@ def _merge_rows(rows: list[_Row]) -> list[_Row]:
     return merged
 
 
-def _order(rows: list[_Row]) -> list[list[Any]]:
-    """Step 6 -- rows top-to-bottom, items left-to-right.
+def _order(rows: list[_Row]) -> list[list[_Span]]:
+    """Step 6 -- rows top-to-bottom, spans left-to-right.
 
     Sorted by mean member baseline rather than the fitted intercept: the
     intercept extrapolates to x = 0, which on a skewed page shifts long rows
@@ -217,7 +231,25 @@ def _order(rows: list[_Row]) -> list[list[Any]]:
     The mean baseline compares rows in the same frame the merge pass uses.
     """
     ordered = sorted(rows, key=lambda r: r.mean_baseline)
-    return [[span.item for span in sorted(row.spans, key=lambda s: s.bbox[0])] for row in ordered]
+    return [sorted(row.spans, key=lambda s: s.bbox[0]) for row in ordered]
+
+
+def _group_spans[T](
+    items: Sequence[T],
+    bbox_of: Callable[[T], BBox],
+    baseline_of: Callable[[T], float] | None,
+) -> list[list[_Span]]:
+    spans = _make_spans(items, bbox_of, baseline_of)
+    if not spans:
+        return []
+    if len(spans) == 1:
+        return [spans]
+    rows = _assign_overlap_rows(spans)
+    for row in rows:
+        row.refresh()
+    rows = _reassign(rows)
+    rows = _merge_rows(rows)
+    return _order(rows)
 
 
 def group_into_lines[T](
@@ -230,27 +262,16 @@ def group_into_lines[T](
     Each returned line's items are ordered left-to-right. The original
     ``items`` are returned untouched -- this never constructs new objects.
     """
-    spans = _make_spans(items, bbox_of, baseline_of)
-    if not spans:
-        return []
-    if len(spans) == 1:
-        return [[spans[0].item]]
-    rows = _assign_overlap_rows(spans)
-    for row in rows:
-        row.refresh()
-    rows = _reassign(rows)
-    rows = _merge_rows(rows)
-    return _order(rows)
+    return [[s.item for s in row] for row in _group_spans(items, bbox_of, baseline_of)]
 
 
 def _row_whitespace(
-    row: list[Any],
-    bbox_of: Callable[[Any], BBox],
+    row: list[_Span],
     span_x0: int,
     span_x1: int,
 ) -> list[tuple[float, float]]:
     """X-intervals within ``[span_x0, span_x1]`` covered by no word in ``row``."""
-    covered = sorted((bbox_of(it)[0], bbox_of(it)[2]) for it in row)
+    covered = sorted((s.bbox[0], s.bbox[2]) for s in row)
     gaps: list[tuple[float, float]] = []
     cursor: float = span_x0
     for x0, x1 in covered:
@@ -272,15 +293,12 @@ BAND_INTRUDER_RATIO = 0.1
 
 
 def _wide_gaps(
-    row: list[Any],
-    bbox_of: Callable[[Any], BBox],
+    row: list[_Span],
     span_x0: int,
     span_x1: int,
     min_gutter: int,
 ) -> list[tuple[float, float]]:
-    return [
-        (a, b) for a, b in _row_whitespace(row, bbox_of, span_x0, span_x1) if (b - a) >= min_gutter
-    ]
+    return [(a, b) for a, b in _row_whitespace(row, span_x0, span_x1) if (b - a) >= min_gutter]
 
 
 def _intersect_gaps(
@@ -298,10 +316,10 @@ def _intersect_gaps(
 
 
 def _split_bands(
-    rows: list[list[Any]],
+    rows: list[list[_Span]],
     row_gaps: list[list[tuple[float, float]]],
     min_gutter: int,
-) -> list[tuple[list[list[Any]], list[tuple[float, float]] | None]]:
+) -> list[tuple[list[list[_Span]], list[tuple[float, float]] | None]]:
     """Partition rows into (rows, gutters) bands, top to bottom.
 
     A band is a maximal run of consecutive rows whose wide gaps share a
@@ -310,8 +328,8 @@ def _split_bands(
     straddling word) is absorbed when the gap resumes on the very next row,
     up to BAND_INTRUDER_RATIO of the band.
     """
-    bands: list[tuple[list[list[Any]], list[tuple[float, float]] | None]] = []
-    flow: list[list[Any]] = []
+    bands: list[tuple[list[list[_Span]], list[tuple[float, float]] | None]] = []
+    flow: list[list[_Span]] = []
     i, n = 0, len(rows)
     while i < n:
         if not row_gaps[i]:
@@ -356,22 +374,45 @@ def _split_bands(
 
 
 def _split_band_columns(
-    band_rows: list[list[Any]],
+    band_rows: list[list[_Span]],
     gutters: list[tuple[float, float]],
-    bbox_of: Callable[[Any], BBox],
-) -> list[list[list[Any]]]:
+) -> list[list[list[_Span]]]:
     cuts = sorted((a + b) / 2.0 for a, b in gutters)
-    columns: list[list[list[Any]]] = [[] for _ in range(len(cuts) + 1)]
+    columns: list[list[list[_Span]]] = [[] for _ in range(len(cuts) + 1)]
     for row in band_rows:
-        parts: list[list[Any]] = [[] for _ in columns]
-        for item in row:
-            x0, _, x1, _ = bbox_of(item)
-            center = (x0 + x1) / 2.0
-            parts[sum(1 for cut in cuts if center >= cut)].append(item)
+        parts: list[list[_Span]] = [[] for _ in columns]
+        for span in row:
+            parts[bisect.bisect_right(cuts, span.x_center)].append(span)
         for idx, part in enumerate(parts):
             if part:
                 columns[idx].append(part)
     return [col for col in columns if col]
+
+
+def _band_blocks(rows: list[list[_Span]]) -> list[list[list[_Span]]]:
+    """Split ordered rows into per-band column blocks; one flow block if no columns."""
+    if len(rows) < 2:
+        return [rows]
+
+    span_x0, _, span_x1, _ = union_boxes(s.bbox for row in rows for s in row)
+    if span_x1 <= span_x0:
+        return [rows]
+    min_gutter = gutter_width(span_x0, span_x1)
+
+    row_gaps = [_wide_gaps(row, span_x0, span_x1, min_gutter) for row in rows]
+    blocks: list[list[list[_Span]]] = []
+    for band_rows, gutters in _split_bands(rows, row_gaps, min_gutter):
+        if gutters is None:
+            blocks.append(band_rows)
+            continue
+        columns = _split_band_columns(band_rows, gutters)
+        if len(columns) < 2:
+            # A gutter that puts everything on one side (a margin artefact)
+            # is not a column separator.
+            blocks.append(band_rows)
+        else:
+            blocks.extend(columns)
+    return blocks
 
 
 def reading_blocks[T](
@@ -387,31 +428,7 @@ def reading_blocks[T](
     A single-column page returns one flow block, so plain documents are
     unaffected.
     """
-    item_list = list(items)
-    if not item_list:
+    rows = _group_spans(items, bbox_of, baseline_of)
+    if not rows:
         return []
-    rows = group_into_lines(item_list, bbox_of, baseline_of)
-    if len(rows) < 2:
-        return [rows]
-
-    boxes = [bbox_of(it) for it in item_list]
-    span_x0 = min(b[0] for b in boxes)
-    span_x1 = max(b[2] for b in boxes)
-    if span_x1 <= span_x0:
-        return [rows]
-    min_gutter = max(MIN_GUTTER_PX, int((span_x1 - span_x0) * MIN_GUTTER_RATIO))
-
-    row_gaps = [_wide_gaps(row, bbox_of, span_x0, span_x1, min_gutter) for row in rows]
-    blocks: list[list[list[T]]] = []
-    for band_rows, gutters in _split_bands(rows, row_gaps, min_gutter):
-        if gutters is None:
-            blocks.append(band_rows)
-            continue
-        columns = _split_band_columns(band_rows, gutters, bbox_of)
-        if len(columns) < 2:
-            # A gutter that puts everything on one side (a margin artefact)
-            # is not a column separator.
-            blocks.append(band_rows)
-        else:
-            blocks.extend(columns)
-    return blocks
+    return [[[s.item for s in row] for row in block] for block in _band_blocks(rows)]

@@ -13,6 +13,7 @@ Tesseract analogue).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Final
 
 logger = logging.getLogger("paperless.paddleocr.languages")
@@ -215,6 +216,20 @@ TESSERACT_TO_PADDLE: Final[dict[str, str]] = {
     "uzb": "uz",
     "vie": "vi",
 }
+
+
+def first_paddle_lang(languages: Iterable[str] | None) -> str:
+    """First requested language as a PaddleOCR code, ``"en"`` when none is requested.
+
+    The paperless parser already translates Tesseract codes; the lookup here
+    is a defensive fallback for a code that slipped through untranslated.
+    """
+    langs = list(languages or [])
+    if not langs:
+        return "en"
+    code = str(langs[0]).strip().lower()
+    return TESSERACT_TO_PADDLE.get(code, code)
+
 
 # Native PaddleOCR codes (including multilingual scripts) that users can pass
 # via PAPERLESS_PADDLEOCR_LANGUAGE without going through the tesseract mapping.

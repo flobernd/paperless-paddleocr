@@ -40,7 +40,7 @@ def test_generate_hocr_orders_blocks_and_sidecar(tmp_path, monkeypatch):
     out_hocr, out_text = tmp_path / "o.hocr", tmp_path / "o.txt"
     options = types.SimpleNamespace(languages=["en"], paddle_engine="classic-cpu")
 
-    PaddleOCREngine._generate_hocr_classic(img, out_hocr, out_text, options)
+    PaddleOCREngine.generate_hocr(img, out_hocr, out_text, options)
 
     assert out_text.read_text(encoding="utf-8") == (
         "sender1\nsender2\nsender3\n\nrecipient1\nrecipient2\nrecipient3\n\nbody1\nbody2\nbody3"

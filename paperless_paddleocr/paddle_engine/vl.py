@@ -22,14 +22,14 @@ from typing import Any
 
 from PIL import Image
 
-from paperless_paddleocr.languages import TESSERACT_TO_PADDLE
-from paperless_paddleocr.paddle_engine.geometry import estimate_word_boxes, poly_to_bbox
-from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word
+from paperless_paddleocr import DEFAULT_VL_MODEL_NAME, DEFAULT_VL_PIPELINE_VERSION
+from paperless_paddleocr.languages import first_paddle_lang
+from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
+from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, words_from_text
 from paperless_paddleocr.paddle_engine.layout import (
-    MIN_GUTTER_PX,
-    MIN_GUTTER_RATIO,
-    fit_baseline,
+    fit_hocr_baseline,
     group_into_lines,
+    gutter_width,
 )
 
 try:
@@ -78,6 +78,11 @@ _TEXT_LABELS: frozenset[str] = frozenset(
     },
 )
 
+#: A spotted word as text, envelope and baseline y, each derived from the
+#: polygon once so the row grouping, the gutter split and the baseline fit
+#: share them.
+_Spot = tuple[str, BBox, float]
+
 # Same rationale as classic.py: construction is expensive, Paddle's local
 # preprocessing predictors are not thread-safe, and ocrmypdf may call
 # generate_hocr from several worker threads. Serialising predict also keeps
@@ -87,12 +92,16 @@ _PIPELINE_CACHE: dict[tuple[Any, ...], Any] = {}
 _PREDICT_LOCK = threading.Lock()
 
 
+def _vl_option(options: Any, name: str, default: str = "") -> str:
+    return (getattr(options, name, "") or "").strip() or default
+
+
 def _pipeline_key(options: Any) -> tuple[Any, ...]:
     return (
-        (getattr(options, "paddle_vl_server_url", "") or "").strip(),
-        (getattr(options, "paddle_vl_model_name", "") or "").strip(),
-        (getattr(options, "paddle_vl_api_key", "") or "").strip(),
-        (getattr(options, "paddle_vl_pipeline_version", "") or "").strip() or "v1.5",
+        _vl_option(options, "paddle_vl_server_url"),
+        _vl_option(options, "paddle_vl_model_name"),
+        _vl_option(options, "paddle_vl_api_key"),
+        _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION),
     )
 
 
@@ -104,14 +113,6 @@ def _get_pipeline(options: Any) -> Any:
             pipeline = _build_pipeline(options)
             _PIPELINE_CACHE[key] = pipeline
     return pipeline
-
-
-def _resolve_lang(options: Any) -> str:
-    langs = list(getattr(options, "languages", None) or [])
-    if not langs:
-        return "en"
-    code = str(langs[0]).strip().lower()
-    return TESSERACT_TO_PADDLE.get(code, code)
 
 
 def normalize_server_url(raw: str) -> str:
@@ -134,10 +135,6 @@ def normalize_server_url(raw: str) -> str:
     return url
 
 
-def _server_url(options: Any) -> str:
-    return normalize_server_url(getattr(options, "paddle_vl_server_url", "") or "")
-
-
 def _spotting_capable(pipeline: Any) -> bool:
     """Word spotting shipped with the v1.5 pipeline; v1 predates it.
 
@@ -151,11 +148,9 @@ def _spotting_capable(pipeline: Any) -> bool:
 def _build_pipeline(options: Any) -> Any:
     import paddle
 
-    url = _server_url(options)
-    model_name = (
-        getattr(options, "paddle_vl_model_name", "") or ""
-    ).strip() or "PaddleOCR-VL-1.5-0.9B"
-    api_key = (getattr(options, "paddle_vl_api_key", "") or "").strip() or None
+    url = normalize_server_url(_vl_option(options, "paddle_vl_server_url"))
+    model_name = _vl_option(options, "paddle_vl_model_name", DEFAULT_VL_MODEL_NAME)
+    api_key = _vl_option(options, "paddle_vl_api_key") or None
 
     # PaddleOCRVL.__init__ probes paddle.amp.is_bfloat16_supported() against
     # the active device before the device= kwarg is applied; with no device
@@ -176,7 +171,7 @@ def _build_pipeline(options: Any) -> Any:
     if api_key:
         kwargs["vl_rec_api_key"] = api_key
 
-    version = (getattr(options, "paddle_vl_pipeline_version", "") or "").strip() or "v1.5"
+    version = _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION)
     # pipeline_version is a newer constructor parameter; older paddleocr
     # falls back to its only pipeline (ocr mode, no word spotting).
     if "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters:
@@ -219,10 +214,7 @@ def _poly_baseline_y(poly: Any) -> float:
     return max(y for _, y in pts)
 
 
-def _split_by_gutter(
-    items: list[tuple[str, Any]],
-    min_gutter: int,
-) -> list[list[tuple[str, Any]]]:
+def _split_by_gutter(items: list[_Spot], min_gutter: int) -> list[list[_Spot]]:
     """Split a spotting line into column segments at wide inter-word gaps.
 
     PaddleOCR-VL spots words across the full page width without per-column
@@ -233,14 +225,14 @@ def _split_by_gutter(
     """
     if not items:
         return []
-    ordered = sorted(items, key=lambda it: poly_to_bbox(it[1])[0])
-    segments: list[list[tuple[str, Any]]] = [[ordered[0]]]
+    ordered = sorted(items, key=lambda it: it[1][0])
+    segments: list[list[_Spot]] = [[ordered[0]]]
     # Gap is measured from the widest right edge seen so far (as in
     # _row_whitespace): a wide box containing later boxes must not fake
     # a gutter.
-    cursor = poly_to_bbox(ordered[0][1])[2]
+    cursor = ordered[0][1][2]
     for cur in ordered[1:]:
-        box = poly_to_bbox(cur[1])
+        box = cur[1]
         if box[0] - cursor >= min_gutter:
             segments.append([cur])
         else:
@@ -250,48 +242,27 @@ def _split_by_gutter(
 
 
 def _spotting_page(spotting: Any, page: Page) -> None:
-    items = [
-        (txt, poly)
+    items: list[_Spot] = [
+        (txt, poly_to_bbox(poly), _poly_baseline_y(poly))
         for txt, poly in zip(spotting["rec_texts"], spotting["rec_polys"], strict=False)
         if txt and txt.strip()
     ]
-    lines = group_into_lines(
-        items,
-        bbox_of=lambda it: poly_to_bbox(it[1]),
-        baseline_of=lambda it: _poly_baseline_y(it[1]),
-    )
+    lines = group_into_lines(items, bbox_of=lambda it: it[1], baseline_of=lambda it: it[2])
     log.debug("VL spotting: %d words, %d lines", len(items), len(lines))
+    if not items:
+        return
 
     # The VL pipeline returns no column structure; a row spanning the gutter
     # must be split here so reading_blocks can reconstruct column-major order.
-    boxes = [poly_to_bbox(poly) for _, poly in items]
-    span_x0 = min((b[0] for b in boxes), default=0)
-    span_x1 = max((b[2] for b in boxes), default=0)
-    min_gutter = (
-        max(MIN_GUTTER_PX, int((span_x1 - span_x0) * MIN_GUTTER_RATIO))
-        if span_x1 > span_x0
-        else MIN_GUTTER_PX
-    )
+    span_x0, _, span_x1, _ = union_boxes(box for _, box, _ in items)
+    min_gutter = gutter_width(span_x0, span_x1)
 
     for line_items in lines:
         for segment in _split_by_gutter(line_items, min_gutter):
-            words = [Word(txt, poly_to_bbox(poly), VL_CONFIDENCE) for txt, poly in segment]
-            if not words:
-                continue
-            x0 = min(w.box[0] for w in words)
-            y0 = min(w.box[1] for w in words)
-            x1 = max(w.box[2] for w in words)
-            y1 = max(w.box[3] for w in words)
-            box = (x0, y0, x1, y1)
+            words = [Word(txt, box, VL_CONFIDENCE) for txt, box, _ in segment]
+            box = union_boxes(w.box for w in words)
             text = " ".join(w.text for w in words)
-            fit_points = [
-                (
-                    (poly_to_bbox(poly)[0] + poly_to_bbox(poly)[2]) / 2.0,
-                    _poly_baseline_y(poly),
-                )
-                for _txt, poly in segment
-            ]
-            slope, intercept = fit_baseline(fit_points)
+            fit_points = [((b[0] + b[2]) / 2.0, baseline_y) for _, b, baseline_y in segment]
             page.blocks.append(
                 Block(
                     box=box,
@@ -301,7 +272,7 @@ def _spotting_page(spotting: Any, page: Page) -> None:
                             confidence=VL_CONFIDENCE,
                             text=text,
                             words=words,
-                            baseline=(slope, slope * x0 + intercept - y1),
+                            baseline=fit_hocr_baseline(fit_points, box),
                         ),
                     ],
                 ),
@@ -341,9 +312,6 @@ def _ocr_page(parsing_res: Any, page: Page) -> None:
 
         lines: list[Line] = []
         for i, line_text in enumerate(text_lines):
-            tokens = line_text.split()
-            if not tokens:
-                continue
             # Per-line boundary arithmetic instead of one truncated line
             # height: rounding never accumulates and a block shorter in
             # pixels than its line count still yields non-degenerate boxes.
@@ -352,15 +320,15 @@ def _ocr_page(parsing_res: Any, page: Page) -> None:
             if ly1 <= ly0:
                 ly1 = ly0 + 1
             line_box = (bx0, ly0, bx1, ly1)
-            words = [
-                Word(tok, box, VL_CONFIDENCE)
-                for tok, box in zip(tokens, estimate_word_boxes(tokens, line_box), strict=False)
-            ]
             lines.append(
-                Line(box=line_box, confidence=VL_CONFIDENCE, text=line_text, words=words),
+                Line(
+                    box=line_box,
+                    confidence=VL_CONFIDENCE,
+                    text=line_text,
+                    words=words_from_text(line_text, line_box, VL_CONFIDENCE),
+                ),
             )
-        if lines:
-            page.blocks.append(Block(box=(bx0, by0, bx1, by1), lines=lines))
+        page.blocks.append(Block(box=(bx0, by0, bx1, by1), lines=lines))
 
 
 def _warn_out_of_bounds(page: Page) -> None:
@@ -406,7 +374,8 @@ def build_page(input_file: Path, options: Any) -> Page:
             prompt_label="spotting" if has_spotting else "ocr",
         )
 
-    page = Page(width=width, height=height, lang=_resolve_lang(options), ocr_system=OCR_SYSTEM)
+    lang = first_paddle_lang(getattr(options, "languages", None))
+    page = Page(width=width, height=height, lang=lang, ocr_system=OCR_SYSTEM)
     if not result:
         return page
 
