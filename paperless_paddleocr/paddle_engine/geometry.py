@@ -10,7 +10,7 @@ reading-order logic; line and column reconstruction lives in
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 #: ``(x0, y0, x1, y1)`` axis-aligned box in image pixels.
@@ -35,6 +35,12 @@ def poly_to_bbox(poly: Any) -> BBox:
     xs = [float(p[0]) for p in poly]
     ys = [float(p[1]) for p in poly]
     return int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
+
+
+def union_boxes(boxes: Iterable[BBox]) -> BBox:
+    """Smallest axis-aligned box containing every box of the non-empty ``boxes``."""
+    xs0, ys0, xs1, ys1 = zip(*boxes, strict=True)
+    return min(xs0), min(ys0), max(xs1), max(ys1)
 
 
 def estimate_word_boxes(words: Sequence[str], box: BBox) -> list[BBox]:
@@ -63,13 +69,13 @@ def estimate_word_boxes(words: Sequence[str], box: BBox) -> list[BBox]:
     line_width = x1 - x0
     weights = [max(1, len(w)) for w in words]
     total = sum(weights) + _GAP_WEIGHT * (len(words) - 1)
-    gap_width = round(line_width * _GAP_WEIGHT / total) if total > 0 else 0
+    gap_width = round(line_width * _GAP_WEIGHT / total)
 
     boxes: list[BBox] = []
     cursor = x0
     last = len(words) - 1
     for i, weight in enumerate(weights):
-        width = round(line_width * weight / total) if total > 0 else 0
+        width = round(line_width * weight / total)
         right = x1 if i == last else cursor + width
         boxes.append((cursor, y0, right, y1))
         cursor = right + gap_width

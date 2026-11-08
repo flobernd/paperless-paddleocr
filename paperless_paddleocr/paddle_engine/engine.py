@@ -3,10 +3,7 @@
 This is the public surface of the package. ocrmypdf drives OCR through the
 :class:`PaddleOCREngine` ABC implementation; the actual recognition lives in
 the ``classic`` / ``vl`` adapters and the wire format in ``hocr`` / ``pdf``.
-``generate_hocr`` dispatches on the requested engine variant;
-``_generate_hocr_classic`` / ``_generate_hocr_vl`` stay as overridable
-staticmethods so the multi-language subclass and tests can intercept a
-single pass.
+``generate_hocr`` picks the adapter by the requested engine variant.
 """
 
 from __future__ import annotations
@@ -17,6 +14,7 @@ from typing import Any
 
 from ocrmypdf.pluginspec import OcrEngine, OrientationConfidence
 
+from paperless_paddleocr import DEFAULT_ENGINE
 from paperless_paddleocr.languages import PADDLE_NATIVE, TESSERACT_TO_PADDLE
 from paperless_paddleocr.paddle_engine import classic, pdf, vl
 from paperless_paddleocr.paddle_engine.hocr import Page, write_document
@@ -39,7 +37,7 @@ _SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
 
 
 def _variant(options: Any) -> str:
-    return getattr(options, "paddle_engine", "classic-cpu")
+    return getattr(options, "paddle_engine", DEFAULT_ENGINE)
 
 
 def _silence_paddle_signal_handler() -> None:
@@ -123,26 +121,6 @@ class PaddleOCREngine(OcrEngine):
             return 0.0
 
     @staticmethod
-    def _generate_hocr_classic(
-        input_file: Path,
-        output_hocr: Path,
-        output_text: Path,
-        options: Any,
-    ) -> None:
-        page = classic.build_page(input_file, options)
-        write_document(page, output_hocr, output_text, sidecar=_order_page(page))
-
-    @staticmethod
-    def _generate_hocr_vl(
-        input_file: Path,
-        output_hocr: Path,
-        output_text: Path,
-        options: Any,
-    ) -> None:
-        page = vl.build_page(input_file, options)
-        write_document(page, output_hocr, output_text, sidecar=_order_page(page))
-
-    @staticmethod
     def generate_hocr(
         input_file: Path,
         output_hocr: Path,
@@ -150,10 +128,9 @@ class PaddleOCREngine(OcrEngine):
         options: Any,
     ) -> None:
         _silence_paddle_signal_handler()
-        if _variant(options) == "vl-remote":
-            PaddleOCREngine._generate_hocr_vl(input_file, output_hocr, output_text, options)
-        else:
-            PaddleOCREngine._generate_hocr_classic(input_file, output_hocr, output_text, options)
+        build_page = vl.build_page if _variant(options) == "vl-remote" else classic.build_page
+        page = build_page(input_file, options)
+        write_document(page, output_hocr, output_text, sidecar=_order_page(page))
 
     @classmethod
     def generate_pdf(

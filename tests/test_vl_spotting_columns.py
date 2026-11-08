@@ -54,22 +54,22 @@ def _sidecar(page: Page) -> str:
 
 def test_split_by_gutter_splits_at_wide_gap():
     items = [
-        ("A", _poly(50, 0, 120, 20)),
-        ("B", _poly(130, 0, 200, 20)),
-        ("C", _poly(500, 0, 580, 20)),
-        ("D", _poly(590, 0, 660, 20)),
+        ("A", (50, 0, 120, 20), 0.0),
+        ("B", (130, 0, 200, 20), 0.0),
+        ("C", (500, 0, 580, 20), 0.0),
+        ("D", (590, 0, 660, 20), 0.0),
     ]
     segs = _split_by_gutter(items, min_gutter=50)
     assert len(segs) == 2
-    assert [t for t, _ in segs[0]] == ["A", "B"]
-    assert [t for t, _ in segs[1]] == ["C", "D"]
+    assert [it[0] for it in segs[0]] == ["A", "B"]
+    assert [it[0] for it in segs[1]] == ["C", "D"]
 
 
 def test_split_by_gutter_keeps_single_column():
     items = [
-        ("A", _poly(50, 0, 120, 20)),
-        ("B", _poly(130, 0, 200, 20)),
-        ("C", _poly(210, 0, 280, 20)),
+        ("A", (50, 0, 120, 20), 0.0),
+        ("B", (130, 0, 200, 20), 0.0),
+        ("C", (210, 0, 280, 20), 0.0),
     ]
     assert len(_split_by_gutter(items, min_gutter=50)) == 1
 
@@ -112,8 +112,8 @@ def test_split_by_gutter_ignores_gap_covered_by_wide_box():
     # segment must be measured from the widest right edge seen so far, not
     # from the immediately preceding (nested) box.
     items = [
-        ("A", _poly(0, 0, 195, 20)),
-        ("B", _poly(10, 0, 20, 20)),
-        ("C", _poly(200, 0, 280, 20)),
+        ("A", (0, 0, 195, 20), 0.0),
+        ("B", (10, 0, 20, 20), 0.0),
+        ("C", (200, 0, 280, 20), 0.0),
     ]
     assert len(_split_by_gutter(items, min_gutter=50)) == 1

@@ -15,7 +15,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from paperless_paddleocr.languages import to_hocr_lang
-from paperless_paddleocr.paddle_engine.geometry import BBox
+from paperless_paddleocr.paddle_engine.geometry import BBox, estimate_word_boxes
 
 
 @dataclass(frozen=True)
@@ -65,6 +65,15 @@ class Page:
     lang: str  # PaddleOCR code; normalised to BCP-47 on serialise
     ocr_system: str
     blocks: list[Block] = field(default_factory=list)
+
+
+def words_from_text(text: str, box: BBox, confidence: int) -> list[Word]:
+    """Words of ``text`` spread across ``box`` for an engine that returned no per-word boxes."""
+    tokens = text.split()
+    return [
+        Word(tok, b, confidence)
+        for tok, b in zip(tokens, estimate_word_boxes(tokens, box), strict=False)
+    ]
 
 
 def _attr(value: str) -> str:
@@ -136,22 +145,7 @@ def render_hocr(page: Page) -> str:
     return "\n".join(out)
 
 
-def sidecar_text(page: Page) -> str:
-    """Plain-text rendering: one line of recognised text per OCR line."""
-    return "\n".join(line.text for block in page.blocks for line in block.lines if line.text)
-
-
-def write_document(
-    page: Page,
-    hocr_path: Path,
-    text_path: Path,
-    *,
-    sidecar: str | None = None,
-) -> None:
-    """Write the hOCR document and its plain-text sidecar to disk.
-
-    ``sidecar`` overrides the default per-line rendering when the caller has
-    a better (reading-ordered) text for the same page.
-    """
+def write_document(page: Page, hocr_path: Path, text_path: Path, *, sidecar: str) -> None:
+    """Write the hOCR document and its reading-ordered ``sidecar`` text to disk."""
     hocr_path.write_text(render_hocr(page), encoding="utf-8")
-    text_path.write_text(sidecar if sidecar is not None else sidecar_text(page), encoding="utf-8")
+    text_path.write_text(sidecar, encoding="utf-8")

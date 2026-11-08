@@ -25,7 +25,7 @@ from paperless_paddleocr.ocrmypdf_plugin import (
     _Word,
     _write_merged_hocr,
 )
-from paperless_paddleocr.paddle_engine import PaddleOCREngine
+from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl
 
 
 def _tiny_png(path):
@@ -63,8 +63,8 @@ def test_generate_pdf_dispatches_and_renders_textonly_pdf(tmp_path, monkeypatch)
         "generate_hocr",
         staticmethod(fake_multilang_generate_hocr),
     )
-    monkeypatch.setattr(PaddleOCREngine, "_generate_hocr_classic", staticmethod(fake_base_classic))
-    monkeypatch.setattr(PaddleOCREngine, "_generate_hocr_vl", staticmethod(fake_base_vl))
+    monkeypatch.setattr(classic, "build_page", fake_base_classic)
+    monkeypatch.setattr(vl, "build_page", fake_base_vl)
 
     options = types.SimpleNamespace(languages=["en", "german"], paddle_engine="classic-cpu")
 
