@@ -10,12 +10,15 @@ back out (it keys off ``bbox`` and ``x_wconf`` in each span ``title``).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from paperless_paddleocr.languages import to_hocr_lang
 from paperless_paddleocr.paddle_engine.geometry import BBox, estimate_word_boxes
+
+_XML_INVALID_RE = re.compile(r"[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 
 @dataclass(frozen=True)
@@ -76,12 +79,36 @@ def words_from_text(text: str, box: BBox, confidence: int) -> list[Word]:
     ]
 
 
+def clean_text(text: str) -> str:
+    """Remove the code points XML 1.0 forbids, lone surrogates included.
+
+    ocrmypdf parses the hOCR with ElementTree, which rejects a document
+    containing one, and a lone surrogate cannot be encoded as UTF-8.
+    """
+    return _XML_INVALID_RE.sub("", text)
+
+
+def clamp_box(box: BBox, width: int, height: int) -> BBox:
+    """Clamp ``box`` to a ``width`` by ``height`` page, keeping at least one pixel.
+
+    Estimated word boxes can come out zero-width, inverted or past the
+    page edge. ocrmypdf drops a line whose box has a negative coordinate
+    or is inverted, and does not render a line of zero height.
+    """
+    x0 = min(max(box[0], 0), width - 1)
+    y0 = min(max(box[1], 0), height - 1)
+    x1 = min(width, max(box[2], x0 + 1))
+    y1 = min(height, max(box[3], y0 + 1))
+    return (x0, y0, x1, y1)
+
+
 def _attr(value: str) -> str:
     return escape(value, {'"': "&quot;"})
 
 
-def _bbox(b: BBox) -> str:
-    return f"bbox {b[0]} {b[1]} {b[2]} {b[3]}"
+def _bbox(box: BBox, page: Page) -> str:
+    x0, y0, x1, y1 = clamp_box(box, page.width, page.height)
+    return f"bbox {x0} {y0} {x1} {y1}"
 
 
 def _baseline(line: Line) -> str:
@@ -115,16 +142,17 @@ def render_hocr(page: Page) -> str:
     line_no = 0
     for block_no, block in enumerate(page.blocks, start=1):
         out.append(
-            f'<div class="ocr_carea" id="carea_{block_no}" title="{_bbox(block.box)}">',
+            f'<div class="ocr_carea" id="carea_{block_no}" title="{_bbox(block.box, page)}">',
         )
         out.append(
-            f'<p class="ocr_par" id="par_{block_no}" lang="{lang}" title="{_bbox(block.box)}">',
+            f'<p class="ocr_par" id="par_{block_no}" lang="{lang}" '
+            f'title="{_bbox(block.box, page)}">',
         )
         for line in block.lines:
             line_no += 1
             out.append(
                 f'<span class="ocr_line" id="line_{line_no}" '
-                f'title="{_bbox(line.box)}; {_baseline(line)}; '
+                f'title="{_bbox(line.box, page)}; {_baseline(line)}; '
                 f'x_wconf {line.confidence}">',
             )
             last = len(line.words) - 1
@@ -132,8 +160,8 @@ def render_hocr(page: Page) -> str:
                 word_no += 1
                 out.append(
                     f'<span class="ocrx_word" id="word_{word_no}" '
-                    f'title="{_bbox(word.box)}; x_wconf {word.confidence}">'
-                    f"{escape(word.text)}</span>",
+                    f'title="{_bbox(word.box, page)}; x_wconf {word.confidence}">'
+                    f"{escape(clean_text(word.text))}</span>",
                 )
                 if i < last:
                     out.append(" ")
@@ -148,4 +176,4 @@ def render_hocr(page: Page) -> str:
 def write_document(page: Page, hocr_path: Path, text_path: Path, *, sidecar: str) -> None:
     """Write the hOCR document and its reading-ordered ``sidecar`` text to disk."""
     hocr_path.write_text(render_hocr(page), encoding="utf-8")
-    text_path.write_text(sidecar, encoding="utf-8")
+    text_path.write_text(clean_text(sidecar), encoding="utf-8")
