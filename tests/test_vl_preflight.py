@@ -63,6 +63,16 @@ def test_unreachable_server_raises_actionable_error(monkeypatch):
         ocrmypdf_plugin.check_options(_opts())
 
 
+def test_socket_error_without_reason_raises_actionable_error(monkeypatch):
+    # socket.timeout and ConnectionResetError are OSErrors that are not URLErrors.
+    def fail(request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", fail)
+    with pytest.raises(MissingDependencyError, match="not reachable"):
+        ocrmypdf_plugin._probe_vl_server("http://gpu:8118", "")
+
+
 def test_auth_failure_raises_actionable_error(monkeypatch):
     def unauthorized(request, timeout=0):
         raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", hdrs=None, fp=None)

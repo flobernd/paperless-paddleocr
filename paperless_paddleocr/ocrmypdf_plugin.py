@@ -31,7 +31,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import Request
 from urllib.request import urlopen as _urlopen
 
@@ -75,7 +75,10 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
     if api_key:
         request.add_header("Authorization", f"Bearer {api_key}")
     try:
-        with _urlopen(request, timeout=5):  # noqa: S310
+        # A vLLM server under load answers /models slowly. Only a successful
+        # probe is cached per worker process, so a host that never answers
+        # delays each document by this timeout.
+        with _urlopen(request, timeout=30):  # noqa: S310
             pass
     except HTTPError as e:
         if e.code in (401, 403):
@@ -89,9 +92,9 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
             e.code,
             base,
         )
-    except URLError as e:
+    except OSError as e:
         raise MissingDependencyError(
-            f"The PaddleOCR-VL server at {base} is not reachable ({e.reason}). "
+            f"The PaddleOCR-VL server at {base} is not reachable ({getattr(e, 'reason', e)}). "
             "Check PAPERLESS_PADDLEOCR_VL_SERVER_URL and that the "
             "paddleocr-genai-vllm-server container is running.",
         ) from e
