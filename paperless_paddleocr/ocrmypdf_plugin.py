@@ -10,7 +10,8 @@ provides two pieces:
   word boxes by confidence. Single-language input falls through to the parent
   unchanged.
 * :func:`add_options`, :func:`check_options`, :func:`get_ocr_engine`
-  hookimpls that register the ``--paddle-engine`` / ``--paddle-vl-*`` /
+  hookimpls that register the ``--paddle-engine`` /
+  ``--paddle-multi-lang-strategy`` / ``--paddle-vl-*`` /
   ``--paddle-*-model-dir`` CLI args (so they're acceptable as kwargs to
   ``ocrmypdf.ocr()``) and bind the engine.
 
@@ -27,7 +28,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -40,9 +40,11 @@ from ocrmypdf.exceptions import MissingDependencyError
 
 from paperless_paddleocr import (
     DEFAULT_ENGINE,
+    DEFAULT_STRATEGY,
     DEFAULT_VL_MODEL_NAME,
     DEFAULT_VL_PIPELINE_VERSION,
     ENGINE_CHOICES,
+    STRATEGY_CHOICES,
 )
 from paperless_paddleocr.paddle_engine import PaddleOCREngine
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
@@ -105,30 +107,12 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
 # Multi-language merge: NMS over word boxes from per-language passes
 # ----------------------------------------------------------------------
 
-_DEFAULT_STRATEGY = "winner"
 _NMS_IOU_THRESHOLD = 0.5
-_VALID_STRATEGIES: frozenset[str] = frozenset({"merge", "winner"})
 
 #: Band height for the NMS index. Any value gives the same result, since a
 #: kept word is indexed into every band it touches; one near a word height
 #: keeps each band's list short.
 _NMS_BAND_PX = 32
-
-
-def _read_strategy() -> str:
-    raw = os.environ.get("PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY", "").strip().lower()
-    if not raw:
-        return _DEFAULT_STRATEGY
-    if raw not in _VALID_STRATEGIES:
-        log.warning(
-            "Unknown PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY=%r; "
-            "falling back to %r. Valid values: %s",
-            raw,
-            _DEFAULT_STRATEGY,
-            sorted(_VALID_STRATEGIES),
-        )
-        return _DEFAULT_STRATEGY
-    return raw
 
 
 class MultiLangPaddleEngine(PaddleOCREngine):
@@ -138,7 +122,8 @@ class MultiLangPaddleEngine(PaddleOCREngine):
 
     Multi-language input runs the base implementation once per language, parses
     each per-language hOCR, and combines the results based on the
-    ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`` env var:
+    ``paddle_multi_lang_strategy`` option, which the paperless parser sets
+    from ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
 
     * ``winner`` (default) - keep only the hOCR from the language with the
       highest aggregate confidence (sum of ``x_wconf`` across all words).
@@ -179,7 +164,7 @@ class MultiLangPaddleEngine(PaddleOCREngine):
             )
             return
 
-        strategy = _read_strategy()
+        strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
         log.info(
             "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
             input_file,
@@ -464,6 +449,18 @@ def add_options(parser: Any) -> None:
         ),
     )
     paddle.add_argument(
+        "--paddle-multi-lang-strategy",
+        choices=STRATEGY_CHOICES,
+        default=DEFAULT_STRATEGY,
+        dest="paddle_multi_lang_strategy",
+        help=(
+            "How to combine the per-language passes when more than one "
+            "language is given: 'winner' (default, keep the pass with the "
+            "highest aggregate confidence) or 'merge' (NMS-merge the word "
+            "boxes of all passes)."
+        ),
+    )
+    paddle.add_argument(
         "--paddle-vl-server-url",
         default="",
         dest="paddle_vl_server_url",
@@ -549,7 +546,7 @@ def add_options(parser: Any) -> None:
 
 @ocrmypdf.hookimpl
 def check_options(options: Any) -> None:
-    """Validate that the requested PaddleOCR engine variant is installed."""
+    """Validate the PaddleOCR options and that the requested engine variant is installed."""
     engine = getattr(options, "paddle_engine", DEFAULT_ENGINE)
     if engine not in ENGINE_CHOICES:
         # argparse validates --paddle-engine via `choices=` on CLI usage, but
@@ -558,6 +555,12 @@ def check_options(options: Any) -> None:
         # silently falling through to classic-cpu.
         raise ValueError(
             f"Unknown paddle_engine={engine!r}. Valid choices: {list(ENGINE_CHOICES)}.",
+        )
+    strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
+    if strategy not in STRATEGY_CHOICES:
+        raise ValueError(
+            f"Unknown paddle_multi_lang_strategy={strategy!r}. "
+            f"Valid choices: {list(STRATEGY_CHOICES)}.",
         )
 
     if engine == "vl-remote":

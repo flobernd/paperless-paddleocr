@@ -10,8 +10,10 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
+from paperless_paddleocr import ocrmypdf_plugin
 from paperless_paddleocr.ocrmypdf_plugin import (
     MultiLangPaddleEngine,
     _merged_page,
@@ -47,17 +49,17 @@ def _install_fake_passes(monkeypatch, words_by_lang, fail_langs=()):
     monkeypatch.setattr(PaddleOCREngine, "generate_hocr", staticmethod(fake))
 
 
+def _opts(**extra) -> types.SimpleNamespace:
+    return types.SimpleNamespace(paddle_engine="classic-cpu", **extra)
+
+
 def _run(tmp_path, monkeypatch, strategy, words_by_lang, fail_langs=()):
-    monkeypatch.setenv("PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY", strategy)
     _install_fake_passes(monkeypatch, words_by_lang, fail_langs)
     img = tmp_path / "page.png"
     Image.new("RGB", (200, 100), "white").save(img)
     out_hocr = tmp_path / "out.hocr"
     out_text = tmp_path / "out.txt"
-    options = types.SimpleNamespace(
-        languages=list(words_by_lang),
-        paddle_engine="classic-cpu",
-    )
+    options = _opts(languages=list(words_by_lang), paddle_multi_lang_strategy=strategy)
     MultiLangPaddleEngine.generate_hocr(img, out_hocr, out_text, options)
     return out_hocr, out_text
 
@@ -104,13 +106,9 @@ def test_all_languages_failing_writes_empty_outputs(tmp_path, monkeypatch):
     assert out_text.read_text(encoding="utf-8") == ""
 
 
-def test_unknown_strategy_falls_back_to_winner(tmp_path, monkeypatch):
-    words_by_lang = {
-        "en": [Word("cat", (0, 0, 50, 20), 60)],
-        "german": [Word("Katze", (0, 0, 50, 20), 95)],
-    }
-    out_hocr, _ = _run(tmp_path, monkeypatch, "bogus-strategy", words_by_lang)
-    assert [w.text for w in _parse_hocr_words(out_hocr)] == ["Katze"]
+def test_check_options_rejects_unknown_strategy():
+    with pytest.raises(ValueError, match="paddle_multi_lang_strategy"):
+        ocrmypdf_plugin.check_options(_opts(paddle_multi_lang_strategy="vote"))
 
 
 def _count_passes(tmp_path, monkeypatch, engine: str) -> int:
