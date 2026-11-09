@@ -3,9 +3,7 @@
 Both engine paths (classic and VL) populate a :class:`Page` and hand it
 here; this module is the single place that knows the hOCR wire format. The
 output is plain hOCR/XHTML so ocrmypdf's ``HocrParser`` can render the
-invisible text layer and the multi-language merge in
-:mod:`paperless_paddleocr.ocrmypdf_plugin` can parse the ``ocrx_word`` spans
-back out (it keys off ``bbox`` and ``x_wconf`` in each span ``title``).
+invisible text layer.
 """
 
 from __future__ import annotations

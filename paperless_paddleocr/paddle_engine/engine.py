@@ -3,7 +3,7 @@
 This is the public surface of the package. ocrmypdf drives OCR through the
 :class:`PaddleOCREngine` ABC implementation; the actual recognition lives in
 the ``classic`` / ``vl`` adapters and the wire format in ``hocr`` / ``pdf``.
-``generate_hocr`` picks the adapter by the requested engine variant.
+``build_page`` picks the adapter by the requested engine variant.
 """
 
 from __future__ import annotations
@@ -121,15 +121,21 @@ class PaddleOCREngine(OcrEngine):
             return 0.0
 
     @staticmethod
+    def build_page(input_file: Path, options: Any) -> Page:
+        """OCR ``input_file`` with the adapter of the requested engine variant."""
+        _silence_paddle_signal_handler()
+        if _variant(options) == "vl-remote":
+            return vl.build_page(input_file, options)
+        return classic.build_page(input_file, options)
+
+    @staticmethod
     def generate_hocr(
         input_file: Path,
         output_hocr: Path,
         output_text: Path,
         options: Any,
     ) -> None:
-        _silence_paddle_signal_handler()
-        build_page = vl.build_page if _variant(options) == "vl-remote" else classic.build_page
-        page = build_page(input_file, options)
+        page = PaddleOCREngine.build_page(input_file, options)
         write_document(page, output_hocr, output_text, sidecar=_order_page(page))
 
     @classmethod

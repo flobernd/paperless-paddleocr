@@ -295,7 +295,7 @@ Default: `v1.5`.
 
 How to combine results when `PAPERLESS_OCR_LANGUAGE` lists more than one language:
 
-- `winner` (default) - run each language pass, pick the one with the highest aggregate word confidence, and use its hOCR as-is.
+- `winner` (default) - run each language pass, pick the one with the highest aggregate word confidence, and use its words.
   Faster and more consistent for documents whose pages are single-script.
 - `merge` - NMS-merge word boxes from all language passes by confidence. Right choice for genuinely mixed-script pages.
 
@@ -350,7 +350,7 @@ PaddleOCR uses different language codes from Tesseract and runs a single languag
    full table is in [`paperless_paddleocr/languages.py`](paperless_paddleocr/languages.py).
 2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once per language and
    combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks the language whose pass
-   has the highest aggregate confidence and uses its hOCR as-is; `merge` runs an NMS over word boxes from every pass and keeps the
+   has the highest aggregate confidence and uses its words; `merge` runs an NMS over word boxes from every pass and keeps the
    highest-confidence box per location. Either way, per-page wall time scales linearly with the number of languages because each
    pass still runs.
 
@@ -367,7 +367,7 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
 
 - **Multi-language combination is `N×` slower** than single-language: every pass still runs. Use `PAPERLESS_PADDLEOCR_LANGUAGE=ml`
   for a single-pass multi-script model when accuracy on each individual language matters less than throughput. The choice of
-  `winner` vs `merge` doesn't change OCR cost - only how the per-language hOCRs are combined afterwards.
+  `winner` vs `merge` doesn't change OCR cost - only how the per-language words are combined afterwards.
 - **`vl-remote` engine** is much more accurate on small fonts, low-DPI scans, and handwritten text - but it requires a separate
   GPU host running `paddleocr-genai-vllm-server`. Per-page latency depends on the server GPU; expect tens of seconds per page
   depending on the GPU.
