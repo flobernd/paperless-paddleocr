@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -48,14 +47,19 @@ from paperless_paddleocr import (
 )
 from paperless_paddleocr.paddle_engine import PaddleOCREngine
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
-from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, write_document
+from paperless_paddleocr.paddle_engine.hocr import (
+    Block,
+    Line,
+    Page,
+    Word,
+    clamp_box,
+    clean_text,
+    write_document,
+)
 from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
 from paperless_paddleocr.paddle_engine.vl import normalize_server_url
 
 log = logging.getLogger("paperless.paddleocr.plugin")
-
-_BBOX_RE = re.compile(r"bbox\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)")
-_CONF_RE = re.compile(r"x_wconf\s+(\d+)")
 
 #: Successful probes per (url, api_key); check_options runs once per
 #: document, and one probe per worker process is enough.
@@ -120,16 +124,18 @@ class MultiLangPaddleEngine(PaddleOCREngine):
 
     Single-language input falls straight through to the base implementation.
 
-    Multi-language input runs the base implementation once per language, parses
-    each per-language hOCR, and combines the results based on the
+    Multi-language input builds one page per language with the base engine
+    and combines the words of those pages based on the
     ``paddle_multi_lang_strategy`` option, which the paperless parser sets
     from ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
 
-    * ``winner`` (default) - keep only the hOCR from the language with the
-      highest aggregate confidence (sum of ``x_wconf`` across all words).
+    * ``winner`` (default) - keep only the words of the language with the
+      highest aggregate confidence (the sum of its word confidences).
       Faster and more consistent on documents whose pages are single-script.
     * ``merge`` - NMS-merge word boxes from all languages by confidence.
       Right choice for genuinely mixed-script pages.
+
+    The first pass that raises fails the document.
     """
 
     @staticmethod
@@ -173,84 +179,48 @@ class MultiLangPaddleEngine(PaddleOCREngine):
             strategy,
         )
 
-        page_w, page_h = _read_page_size(input_file)
-        per_lang_words = _run_passes(input_file, output_hocr, output_text, options, langs)
-        if per_lang_words:
-            merged, primary = _select(strategy, per_lang_words, langs)
-        else:
-            log.warning(
-                "All %d per-language PaddleOCR passes failed for %s; writing empty sidecar.",
-                len(langs),
-                input_file,
-            )
-            merged, primary = [], langs[0]
+        pages: dict[str, Page] = {}
+        for lang in langs:
+            sub_options = copy.copy(options)
+            sub_options.languages = [lang]
+            try:
+                pages[lang] = PaddleOCREngine.build_page(input_file, sub_options)
+            except Exception as e:
+                raise RuntimeError(
+                    f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
+                ) from e
 
+        per_lang_words = {lang: page_words(page) for lang, page in pages.items()}
+        merged, primary = _select(strategy, per_lang_words, langs)
         blocks = reading_blocks(merged, bbox_of=lambda w: w.box)
+        # The adapters size each page from the input image, so any pass gives the page size.
+        first = pages[langs[0]]
         write_document(
-            _merged_page(blocks, page_w, page_h, hocr_lang=primary),
+            _merged_page(blocks, first.width, first.height, hocr_lang=primary),
             output_hocr,
             output_text,
             sidecar=_blocks_to_text(blocks),
         )
 
 
-def _run_passes(
-    input_file: Path,
-    output_hocr: Path,
-    output_text: Path,
-    options: Any,
-    langs: list[str],
-) -> dict[str, list[Word]]:
-    """Run the base engine once per language and collect each pass's words.
+def page_words(page: Page) -> list[Word]:
+    """Every word of ``page`` that has text, in the block order of the single-language hOCR.
 
-    A pass that raises, or whose hOCR cannot be parsed, is logged and
-    skipped so the surviving languages still produce a document.
+    The merge sorts stably, so the word order decides its ties. Boxes are
+    clamped to the page and texts cleaned and stripped here, ahead of the
+    merge, because the merged lines derive their boxes, baselines and word
+    spacing from these words.
     """
-    per_lang_words: dict[str, list[Word]] = {}
-    failed_langs: list[str] = []
-    tmp_files: list[Path] = []
-    try:
-        for lang in langs:
-            sub_options = copy.copy(options)
-            sub_options.languages = [lang]
-
-            tmp_hocr = output_hocr.with_name(f"{output_hocr.stem}.{lang}.hocr")
-            tmp_text = output_text.with_name(f"{output_text.stem}.{lang}.txt")
-            tmp_files.extend([tmp_hocr, tmp_text])
-
-            try:
-                PaddleOCREngine.generate_hocr(input_file, tmp_hocr, tmp_text, sub_options)
-            except Exception:
-                failed_langs.append(lang)
-                log.exception(
-                    "PaddleOCR pass for lang=%s on %s failed; continuing.",
-                    lang,
-                    input_file,
-                )
-                continue
-
-            try:
-                lang_words = _parse_hocr_words(tmp_hocr)
-            except Exception:
-                failed_langs.append(lang)
-                log.exception("Failed to parse temp hOCR %s; skipping.", tmp_hocr)
-                continue
-
-            log.debug("lang=%s: %d words", lang, len(lang_words))
-            per_lang_words[lang] = lang_words
-
-        if failed_langs:
-            log.info(
-                "%d/%d per-language passes succeeded (failed: %s).",
-                len(per_lang_words),
-                len(langs),
-                ", ".join(failed_langs),
-            )
-    finally:
-        for tmp in tmp_files:
-            if tmp.exists():
-                tmp.unlink()
-    return per_lang_words
+    grouped = reading_blocks(page.blocks, bbox_of=lambda b: b.box)
+    words: list[Word] = []
+    for block in (blk for group in grouped for row in group for blk in row):
+        for line in block.lines:
+            for word in line.words:
+                text = clean_text(word.text).strip()
+                if text:
+                    box = clamp_box(word.box, page.width, page.height)
+                    words.append(Word(text, box, word.confidence))
+    return words
 
 
 def _select(
@@ -288,48 +258,6 @@ def _select(
 # ----------------------------------------------------------------------
 # hOCR helpers
 # ----------------------------------------------------------------------
-
-
-def _read_page_size(image_path: Path) -> tuple[int, int]:
-    """Return ``(width, height)`` of the image in pixels."""
-    from PIL import Image
-
-    with Image.open(image_path) as img:
-        return img.size
-
-
-def _parse_hocr_words(hocr_path: Path) -> list[Word]:
-    """Extract every ``ocrx_word`` span from an hOCR file."""
-    from lxml import html
-
-    # Defence-in-depth: the hOCR is engine-generated and trusted. libxml2's
-    # HTML parser does not expand XML/DTD entities (so XXE is not a vector
-    # on this path), and no_network=True blocks any external fetch.
-    parser = html.HTMLParser(no_network=True)
-
-    words: list[Word] = []
-    tree = html.parse(str(hocr_path), parser=parser)
-    for span in tree.iter("span"):
-        cls = (span.get("class") or "").split()
-        if "ocrx_word" not in cls:
-            continue
-        title = span.get("title") or ""
-        bbox_m = _BBOX_RE.search(title)
-        if bbox_m is None:
-            continue
-        conf_m = _CONF_RE.search(title)
-        conf = int(conf_m.group(1)) if conf_m else 0
-        text = "".join(span.itertext()).strip()
-        if not text:
-            continue
-        box = (
-            int(bbox_m.group(1)),
-            int(bbox_m.group(2)),
-            int(bbox_m.group(3)),
-            int(bbox_m.group(4)),
-        )
-        words.append(Word(text, box, conf))
-    return words
 
 
 def _iou(a: BBox, b: BBox) -> float:
