@@ -54,12 +54,13 @@ from paperless.parsers.utils import (
 from PIL import Image
 
 from paperless_paddleocr import (
-    DEFAULT_ENGINE,
+    DEFAULT_STRATEGY,
     DEFAULT_VL_MODEL_NAME,
     DEFAULT_VL_PIPELINE_VERSION,
-    ENGINE_CHOICES,
+    STRATEGY_CHOICES,
     __version__,
 )
+from paperless_paddleocr.env import engine_from_env, env_choice, env_int
 from paperless_paddleocr.languages import resolve_paddle_languages
 
 if TYPE_CHECKING:
@@ -87,38 +88,6 @@ _OCRMYPDF_PLUGIN_MODULE: Final[str] = "paperless_paddleocr.ocrmypdf_plugin"
 
 class _NoTextFoundError(Exception):
     """Internal signal that ocrmypdf produced an empty sidecar."""
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid integer value for %s=%r; using default %d.",
-            name,
-            raw,
-            default,
-        )
-        return default
-
-
-def _env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    if raw not in choices:
-        logger.warning(
-            "Invalid value for %s=%r; valid choices are %s. Using default %r.",
-            name,
-            raw,
-            choices,
-            default,
-        )
-        return default
-    return raw
 
 
 def _redacted(args: dict[str, Any]) -> dict[str, Any]:
@@ -159,7 +128,7 @@ class PaperlessPaddleParser:
         if mime_type not in _SUPPORTED_MIME_TYPES:
             return None
         # Default 15 beats Tesseract's 10 - once installed, PaddleOCR wins.
-        return _env_int("PAPERLESS_PADDLEOCR_SCORE", default=15)
+        return env_int("PAPERLESS_PADDLEOCR_SCORE", default=15)
 
     # ------------------------------------------------------------------
     # Properties
@@ -189,10 +158,11 @@ class PaperlessPaddleParser:
         self.log = logger
 
         # Plugin-specific env vars, read once per parser instance.
-        self._engine: str = _env_choice(
-            "PAPERLESS_PADDLEOCR_ENGINE",
-            choices=ENGINE_CHOICES,
-            default=DEFAULT_ENGINE,
+        self._engine: str = engine_from_env()
+        self._strategy: str = env_choice(
+            "PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY",
+            STRATEGY_CHOICES,
+            DEFAULT_STRATEGY,
         )
         self._vl_server_url: str = os.environ.get("PAPERLESS_PADDLEOCR_VL_SERVER_URL", "").strip()
         self._vl_model_name: str = (
@@ -391,6 +361,7 @@ class PaperlessPaddleParser:
             # is required (and 'hocr' would be silently ignored).
             # Custom kwargs registered by our add_options hookimpl.
             "paddle_engine": self._engine,
+            "paddle_multi_lang_strategy": self._strategy,
             "paddle_vl_server_url": self._vl_server_url,
             "paddle_vl_model_name": self._vl_model_name,
             "paddle_vl_api_key": self._vl_api_key,
