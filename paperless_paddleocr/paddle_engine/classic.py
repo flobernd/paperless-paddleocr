@@ -129,6 +129,15 @@ def _preprocess_scale(
     return 1.0, 1.0
 
 
+def _as_list(value: Any) -> list:
+    """Some PaddleOCR result fields are numpy arrays.
+
+    An array with more than one element raises ``ValueError`` in a boolean
+    context, so the fields and their per-line items are tested by length.
+    """
+    return [] if value is None else list(value)
+
+
 def _scaled(poly: Any, sx: float, sy: float) -> list[tuple[float, float]]:
     return [(float(p[0]) * sx, float(p[1]) * sy) for p in poly]
 
@@ -191,12 +200,12 @@ def build_page(input_file: Path, options: Any) -> Page:
     page_result = result[0]
     sx, sy = _preprocess_scale(page_result, width, height)
 
-    texts = page_result.get("rec_texts", []) or []
-    scores = page_result.get("rec_scores", []) or []
-    polys = page_result.get("rec_polys", []) or []
-    token_lines = page_result.get("text_word", []) or []
-    token_boxes = page_result.get("text_word_region", []) or []
-    has_word_boxes = bool(token_lines and token_boxes)
+    texts = _as_list(page_result.get("rec_texts"))
+    scores = _as_list(page_result.get("rec_scores"))
+    polys = _as_list(page_result.get("rec_polys"))
+    token_lines = _as_list(page_result.get("text_word"))
+    token_boxes = _as_list(page_result.get("text_word_region"))
+    has_word_boxes = len(token_lines) > 0 and len(token_boxes) > 0
     log.debug("classic: %d regions, word boxes=%s", len(texts), has_word_boxes)
 
     for idx, (text, score, poly) in enumerate(zip(texts, scores, polys, strict=False)):
@@ -205,15 +214,12 @@ def build_page(input_file: Path, options: Any) -> Page:
         region_box = poly_to_bbox(_scaled(poly, sx, sy))
         conf = int(float(score) * 100)
 
-        if (
-            idx < len(token_lines)
-            and idx < len(token_boxes)
-            and token_lines[idx]
-            and token_boxes[idx]
-        ):
+        line_tokens = _as_list(token_lines[idx]) if idx < len(token_lines) else []
+        line_boxes = _as_list(token_boxes[idx]) if idx < len(token_boxes) else []
+        if len(line_tokens) > 0 and len(line_boxes) > 0:
             words = [
                 Word(w_text, _word_box(w_boxes, sx, sy), conf)
-                for w_text, w_boxes in _merge_subtokens(token_lines[idx], token_boxes[idx])
+                for w_text, w_boxes in _merge_subtokens(line_tokens, line_boxes)
                 if w_text
             ]
         else:
