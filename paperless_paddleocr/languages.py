@@ -262,15 +262,10 @@ def normalize_paddle_lang(code: str) -> str | None:
     return _SCRIPT_BUNDLES.get(cleaned, cleaned)
 
 
-# Best-effort PaddleOCR code → BCP-47 (ISO 639-1) for the hOCR ``lang``
-# attribute. Both the single-language path (paddle_engine) and the merged
-# multi-language path (ocrmypdf_plugin) route through :func:`to_hocr_lang`
-# so the emitted ``lang`` is identical and standards-valid regardless of
-# which path produced the hOCR. Every TESSERACT_TO_PADDLE target is covered:
-# the two-letter codes are already ISO 639-1 and PaddleOCR's own names are
-# renamed below. Multilingual/script bundles (``ml``, ``latin``, ``arabic``,
-# ``cyrillic``, ``devanagari``) have no single language and map to the
-# BCP-47 "undetermined" subtag.
+# to_hocr_lang renders a PaddleOCR code as its rename below, else as itself
+# when it is a two-letter member of PADDLE_VALID_LANGS, else as BCP-47 "und".
+# Longer codes stay "und" because they do not reliably match ISO 639:
+# PaddleOCR's mah is Magahi, and ISO 639-2 mah is Marshallese.
 _BCP47_RENAMES: Final[dict[str, str]] = {
     "ch": "zh",
     "chinese_cht": "zh",
@@ -279,9 +274,6 @@ _BCP47_RENAMES: Final[dict[str, str]] = {
     "korean": "ko",
     "rs_cyrillic": "sr",
     "rs_latin": "sr",
-}
-_PADDLE_TO_BCP47: Final[dict[str, str]] = {
-    code: _BCP47_RENAMES.get(code, code) for code in TESSERACT_TO_PADDLE.values()
 }
 
 
@@ -293,7 +285,12 @@ def to_hocr_lang(paddle_code: str | None) -> str:
     """
     if not paddle_code:
         return "und"
-    return _PADDLE_TO_BCP47.get(paddle_code.strip().lower(), "und")
+    code = paddle_code.strip().lower()
+    if code in _BCP47_RENAMES:
+        return _BCP47_RENAMES[code]
+    if len(code) == 2 and code in PADDLE_VALID_LANGS:
+        return code
+    return "und"
 
 
 def resolve_paddle_languages(
@@ -363,8 +360,8 @@ def resolve_paddle_languages(
 
 
 def _split_langs(joined: str) -> list[str]:
-    """Split a ``+``-separated language string, trimming empty entries."""
-    return [part.strip() for part in joined.split("+") if part.strip()]
+    """Split a ``+``-separated language string, dropping empty and repeated entries."""
+    return list(dict.fromkeys(part.strip() for part in joined.split("+") if part.strip()))
 
 
 def _warn_multi(codes: list[str]) -> None:

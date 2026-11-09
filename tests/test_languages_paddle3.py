@@ -69,3 +69,12 @@ def test_ml_normalises_to_none_for_default_multilingual_model():
 def test_regular_codes_pass_through_trimmed():
     assert normalize_paddle_lang(" German ") == "german"
     assert normalize_paddle_lang("es") == "es"
+
+
+def test_override_with_a_repeated_code_runs_one_pass():
+    assert resolve_paddle_languages("eng", "en+en") == ["en"]
+
+
+def test_override_de_duplication_keeps_the_given_order():
+    # The merge strategy labels its hOCR with the first code, and vl-remote runs only the first.
+    assert resolve_paddle_languages("eng", "german+en+german") == ["german", "en"]

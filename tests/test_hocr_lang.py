@@ -37,6 +37,16 @@ def test_to_hocr_lang_unknown_and_multilingual_are_undetermined():
     assert to_hocr_lang("klingon") == "und"
 
 
+def test_valid_two_letter_paddle_code_renders_as_itself():
+    # Bashkir in PaddleOCR and in ISO 639-1, and no Tesseract code maps to it.
+    assert to_hocr_lang("ba") == "ba"
+
+
+def test_valid_paddle_code_longer_than_two_letters_is_undetermined():
+    # PaddleOCR's mah is Magahi. ISO 639-2 mah is Marshallese.
+    assert to_hocr_lang("mah") == "und"
+
+
 def _write_merged(out, words, page_w, page_h, *, hocr_lang):
     blocks = reading_blocks(words, bbox_of=lambda w: w.box)
     page = _merged_page(blocks, page_w, page_h, hocr_lang=hocr_lang)
