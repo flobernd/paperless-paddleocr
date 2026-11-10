@@ -17,6 +17,9 @@ next call spawns a fresh worker:
 * it exits, or closes its stdout, before it answers,
 * it sends a line that is not the response to the pending request, such as a
   line that is not JSON or a response with another id or a null id,
+* it sends a response off protocol: an ``ok`` that is not a bool, an ``ok``
+  response without a ``result`` dict, or an error response without an
+  ``error`` dict that holds a string ``message``,
 * it sends nothing within ``PAPERLESS_PADDLEOCR_WORKER_TIMEOUT`` seconds
   (600 by default).
 
@@ -73,9 +76,9 @@ class PaddleWorkerError(RuntimeError):
 
     ``error_chain`` holds the class names of the exception the worker
     reported and of each exception before it, as the worker reported them,
-    and is empty when the worker itself failed. ``worker_stderr`` holds the
-    last stderr lines of a worker that failed, and is empty for an error
-    response.
+    and is empty when the worker itself failed or its error response named
+    no class. ``worker_stderr`` holds the last stderr lines of a worker that
+    failed, and is empty for an error response.
     """
 
     def __init__(
@@ -118,6 +121,17 @@ def worker_environment() -> dict[str, str]:
     # written, and a killed worker loses none of it in a buffer.
     env["PYTHONUNBUFFERED"] = "1"
     return env
+
+
+def _follows_protocol(response: dict[str, Any]) -> bool:
+    """Whether ``response`` carries a dict result or an error with a message."""
+    ok = response.get("ok")
+    if ok is True:
+        return isinstance(response.get("result"), dict)
+    if ok is False:
+        error = response.get("error")
+        return isinstance(error, dict) and isinstance(error.get("message"), str)
+    return False
 
 
 class _Worker:
@@ -209,6 +223,11 @@ class _Worker:
                 f"The paddle worker answered the {op} request with a line that is not its "
                 f"response: {answer[:200]!r}"
             )
+        if not _follows_protocol(response):
+            raise self._fail(
+                f"The paddle worker answered the {op} request with a response that does not "
+                f"follow the protocol: {answer[:200]!r}"
+            )
         return response
 
     def _fail(self, reason: str) -> PaddleWorkerError:
@@ -289,14 +308,13 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
     if response["ok"]:
         return response["result"]
     error = response["error"]
-    log.debug("Paddle worker request %d failed:\n%s", request_id, error["traceback"])
+    log.debug("Paddle worker request %d failed:\n%s", request_id, error.get("traceback", ""))
     # A line without a chain still names the exception's own class, the first
-    # link of each chain.
+    # link of each chain, when it carries the type.
     chain = error.get("chain")
-    raise PaddleWorkerError(
-        error["message"],
-        error_chain=tuple(chain) if isinstance(chain, list) else (error["type"],),
-    )
+    if not isinstance(chain, list):
+        chain = [error["type"]] if isinstance(error.get("type"), str) else []
+    raise PaddleWorkerError(error["message"], error_chain=tuple(chain))
 
 
 _ping_result: dict[str, Any] | None = None
