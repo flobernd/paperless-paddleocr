@@ -62,8 +62,8 @@ from paperless_paddleocr.paddle_engine.vl import normalize_server_url
 
 log = logging.getLogger("paperless.paddleocr.plugin")
 
-#: Successful probes per (url, api_key); check_options runs once per
-#: document, and one probe per worker process is enough.
+#: Successful probes per (url, api_key). check_options runs once per
+#: document, and one probe per Celery worker process is enough.
 _PROBED_SERVERS: set[tuple[str, str]] = set()
 
 
@@ -84,8 +84,8 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
         if api_key:
             request.add_header("Authorization", f"Bearer {api_key}")
         # A vLLM server under load answers /models slowly. Only a successful
-        # probe is cached per worker process, so a host that never answers
-        # delays each document by this timeout.
+        # probe is cached per Celery worker process, so for a host that never
+        # answers, each document waits this long and then fails.
         with _urlopen(request, timeout=30):  # noqa: S310
             pass
     except HTTPError as e:
