@@ -55,15 +55,29 @@ def _line_texts(page: Page) -> list[str]:
 
 
 def test_build_page_sends_the_image_path_the_kwargs_and_the_pipeline_version(tmp_path, monkeypatch):
+    monkeypatch.delenv("PAPERLESS_PADDLEOCR_VL_API_KEY", raising=False)
     png = _png(tmp_path)
-    options = _opts(paddle_vl_pipeline_version="v1.6")
+    options = _opts(
+        paddle_vl_model_name="PaddleOCR-VL-1.6-0.9B",
+        paddle_vl_pipeline_version="v1.6",
+    )
     requests = _answer(monkeypatch, _result(None, []))
     vl.build_page(png, options)
+    # The constructor arguments carry no pipeline_version, which the worker
+    # adds only when its paddleocr takes the parameter.
     assert requests == [
         {
             "op": "vl",
             "image": str(png),
-            "kwargs": vl.pipeline_kwargs(options),
+            "kwargs": {
+                "device": "cpu",
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False,
+                "use_layout_detection": False,
+                "vl_rec_api_model_name": "PaddleOCR-VL-1.6-0.9B",
+                "vl_rec_backend": "vllm-server",
+                "vl_rec_server_url": "http://gpu:8118/v1",
+            },
             "pipeline_version": "v1.6",
         },
     ]
