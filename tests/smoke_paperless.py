@@ -1,19 +1,19 @@
 """Smoke test executed inside the paperless-ngx Docker image.
 
-This is *not* collected by pytest (filename is not ``test_*``); it is run
+This is *not* collected by pytest (filename is not ``test_*``). It is run
 directly by ``.github/workflows/smoke.yml`` with the real paperless-ngx
 runtime on ``PYTHONPATH``. Its job is to catch the failure modes the
 lightweight unit suite cannot:
 
 * the ``paperless_ngx.parsers`` entry point is actually discoverable, and
-  resolves to :class:`PaperlessPaddleParser`;
+  resolves to :class:`PaperlessPaddleParser`
 * ``paperless_paddleocr.parser`` imports cleanly against the *real*
-  paperless-ngx API surface (``documents.parsers``, ``paperless.config``,
-  ``paperless.parsers.*``) - i.e. paperless has not renamed/moved anything
-  the parser depends on;
+  paperless-ngx API surface (``paperless.parsers.tesseract``,
+  ``paperless.version``) - i.e. paperless has not renamed/moved anything
+  the parser depends on
 * ``paperless_paddleocr.ocrmypdf_plugin`` imports and the ocrmypdf hookimpl
-  wiring binds our engine;
-* the Tesseract→PaddleOCR language mapping behaves;
+  wiring binds our engine
+* the Tesseract→PaddleOCR language mapping behaves
 * the parser subclasses the upstream Tesseract parser, and the arguments its
   builder returns carry the engine wiring, keep the user args' precedence and
   never carry the API key.

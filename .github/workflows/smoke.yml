@@ -2,9 +2,10 @@ name: Smoke (paperless-ngx)
 
 # Runs inside the real paperless-ngx image so we catch API drift in
 # the paperless parser-plugin surface that the lightweight unit suite
-# (which never imports Django/paperless) cannot. paddlepaddle/paddleocr
-# are deliberately NOT installed - the smoke test only exercises import
-# wiring and entry-point discovery, not actual OCR.
+# (which never imports Django/paperless) cannot. The job migrates a
+# SQLite database, and the smoke test checks the entry point and the
+# imports and builds the ocrmypdf arguments with the parser. It runs no
+# OCR, so the job installs neither PaddlePaddle nor PaddleOCR.
 
 on:
   push:
