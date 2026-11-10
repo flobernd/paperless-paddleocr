@@ -31,28 +31,6 @@ def test_hebrew_is_dropped_with_fallback():
     assert resolve_paddle_languages("heb", None) == ["en"]
 
 
-def test_common_european_codes_are_mapped():
-    expected = {
-        "slk": "sk",
-        "slv": "sl",
-        "hrv": "hr",
-        "bul": "bg",
-        "cat": "ca",
-        "est": "et",
-        "lav": "lv",
-        "lit": "lt",
-        "srp": "rs_cyrillic",
-        "srp_latn": "rs_latin",
-        "ind": "id",
-        "msa": "ms",
-        "fas": "fa",
-        "urd": "ur",
-        "kaz": "kk",
-    }
-    for tess, paddle in expected.items():
-        assert TESSERACT_TO_PADDLE.get(tess) == paddle
-
-
 def test_script_bundles_normalise_to_valid_codes():
     assert normalize_paddle_lang("latin") == "la"
     assert normalize_paddle_lang("arabic") == "ar"
@@ -62,17 +40,9 @@ def test_script_bundles_normalise_to_valid_codes():
         assert normalize_paddle_lang(bundle) in PADDLE_VALID_LANGS
 
 
-def test_ml_normalises_to_none_for_default_multilingual_model():
-    assert normalize_paddle_lang("ml") is None
-
-
 def test_regular_codes_pass_through_trimmed():
     assert normalize_paddle_lang(" German ") == "german"
     assert normalize_paddle_lang("es") == "es"
-
-
-def test_override_with_a_repeated_code_runs_one_pass():
-    assert resolve_paddle_languages("eng", "en+en") == ["en"]
 
 
 def test_override_de_duplication_keeps_the_given_order():

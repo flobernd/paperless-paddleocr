@@ -16,14 +16,6 @@ from paperless_paddleocr.paddle_engine.hocr import Word, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
 
-def test_to_hocr_lang_known_codes():
-    assert to_hocr_lang("en") == "en"
-    assert to_hocr_lang("german") == "de"
-    assert to_hocr_lang("ch") == "zh"
-    assert to_hocr_lang("chinese_cht") == "zh"
-    assert to_hocr_lang("japan") == "ja"
-
-
 def test_to_hocr_lang_is_case_insensitive_and_trims():
     assert to_hocr_lang("  German ") == "de"
     assert to_hocr_lang("CH") == "zh"

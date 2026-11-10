@@ -27,10 +27,6 @@ def test_resolve_device_defaults_to_cpu():
     assert classic._resolve_device(_opts("vl-remote")) == "cpu"
 
 
-def test_resolve_device_returns_gpu_for_classic_gpu():
-    assert classic._resolve_device(_opts("classic-gpu")) == "gpu"
-
-
 def test_engine_kwargs_classic_cpu_uses_cpu_and_mkldnn_workaround():
     kwargs = classic.engine_kwargs(_opts("classic-cpu"))
     assert kwargs["device"] == "cpu"

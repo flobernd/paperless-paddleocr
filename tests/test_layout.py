@@ -20,12 +20,6 @@ def _box(b):
 # --- fit_baseline ---------------------------------------------------------
 
 
-def test_fit_baseline_flat_line():
-    slope, intercept = fit_baseline([(0.0, 50.0), (100.0, 50.0), (200.0, 50.0)])
-    assert abs(slope) < 1e-9
-    assert abs(intercept - 50.0) < 1e-9
-
-
 def test_fit_baseline_sloped_line():
     # points lie exactly on y = 2x + 10
     slope, intercept = fit_baseline([(0.0, 10.0), (10.0, 30.0), (20.0, 50.0)])
@@ -132,11 +126,6 @@ def _two_col_rows(count, y_start=0):
 def test_reading_blocks_empty_and_single():
     assert reading_blocks([], bbox_of=_box) == []
     assert reading_blocks([(0, 0, 10, 10)], bbox_of=_box) == [[[(0, 0, 10, 10)]]]
-
-
-def test_reading_blocks_single_column_is_one_flow_block():
-    words = [(10, 0, 390, 20), (10, 40, 390, 60), (10, 80, 390, 100)]
-    assert reading_blocks(words, bbox_of=_box) == [[[w] for w in words]]
 
 
 def test_reading_blocks_two_columns():

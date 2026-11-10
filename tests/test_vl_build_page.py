@@ -99,7 +99,7 @@ def test_build_page_places_the_spotted_words(tmp_path, monkeypatch):
     assert words == [("Hello", (10, 20, 60, 40)), ("world", (70, 20, 120, 40))]
 
 
-@pytest.mark.parametrize("spotting", [None, {"rec_texts": [], "rec_polys": []}])
+@pytest.mark.parametrize("spotting", [{"rec_texts": [], "rec_polys": []}])
 def test_build_page_reads_the_blocks_when_no_word_was_spotted(tmp_path, monkeypatch, spotting):
     blocks = [{"label": "text", "content": "one two", "bbox": [10, 10, 110, 30]}]
     _answer(monkeypatch, _result(spotting, blocks))

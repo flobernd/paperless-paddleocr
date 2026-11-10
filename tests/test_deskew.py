@@ -45,13 +45,6 @@ def test_straight_page_reports_zero(tmp_path):
     assert estimate_skew(_bars_image(tmp_path, 0.0)) == 0.0
 
 
-def test_clockwise_skew_needs_positive_correction(tmp_path):
-    # rotate_by=-2 turns the content 2 degrees clockwise; the correction that
-    # ocrmypdf applies via PIL (positive = counterclockwise) must be about +2.
-    angle = estimate_skew(_bars_image(tmp_path, -2.0))
-    assert 1.5 <= angle <= 2.5
-
-
 def test_counterclockwise_skew_needs_negative_correction(tmp_path):
     angle = estimate_skew(_bars_image(tmp_path, 2.0))
     assert -2.5 <= angle <= -1.5

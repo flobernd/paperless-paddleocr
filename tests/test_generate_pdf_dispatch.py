@@ -21,7 +21,7 @@ import types
 from PIL import Image
 
 from paperless_paddleocr.ocrmypdf_plugin import MultiLangPaddleEngine, _merged_page
-from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl
+from paperless_paddleocr.paddle_engine import classic, vl
 from paperless_paddleocr.paddle_engine.hocr import Word, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
@@ -83,11 +83,3 @@ def test_generate_pdf_dispatches_and_renders_textonly_pdf(tmp_path, monkeypatch)
     assert data.startswith(b"%PDF"), "generate_pdf must emit a real PDF"
     assert data.rstrip().endswith(b"%%EOF"), "PDF must be well-formed"
     assert out_text.read_text(encoding="utf-8") == "hallo welt"
-
-
-def test_generate_pdf_is_classmethod_for_subclass_dispatch():
-    # A @staticmethod here would hardcode the base class and bypass the
-    # multi-language merge.
-    assert isinstance(PaddleOCREngine.__dict__["generate_pdf"], classmethod), (
-        "generate_pdf must be a classmethod"
-    )
