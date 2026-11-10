@@ -56,7 +56,9 @@ needs, so a result of another shape is an error response that names what is
 missing and the paddleocr version: a prediction without a page result, a
 classic page result without ``rec_polys``, ``rec_scores`` or ``rec_texts``
 or with lists of different lengths, a VL page result without
-``parsing_res_list``, or a spotting result whose two lists differ in length.
+``parsing_res_list``, a spotting result whose two lists differ in length,
+or a layout block of an unknown shape on a page whose spotting result is
+missing or lacks ``rec_texts`` or ``rec_polys``.
 
 Results are plain JSON: numpy arrays and scalars become lists and Python
 scalars at any depth.
@@ -92,6 +94,10 @@ _PR_SET_PDEATHSIG = 1
 _CLASSIC_REGION_FIELDS = ("rec_polys", "rec_scores", "rec_texts")
 #: Classic result fields of the sub-word tokens, which the parent can do without.
 _CLASSIC_WORD_FIELDS = ("text_word", "text_word_region")
+#: Keys of the layout block dicts of older paddleocr releases.
+_VL_BLOCK_KEYS = ("block_bbox", "block_content", "block_label")
+#: Members of the layout block objects of current paddlex.
+_VL_BLOCK_MEMBERS = ("bbox", "content", "label")
 
 # The first failure is kept because a package that fails half-way through
 # its import leaves its loaded submodules in sys.modules, and the next import
@@ -282,19 +288,29 @@ def _spotting_capable(pipeline: Any) -> bool:
     return version is not None and version != "v1"
 
 
-def _vl_block(block: Any) -> dict[str, Any]:
+def _vl_block(block: Any, *, check_shape: bool) -> dict[str, Any]:
     # Current paddlex returns block objects, and older paddleocr releases
     # returned dicts with block_-prefixed keys. The type decides, because a
     # falsy attribute (content="" is the object default) must not fall
     # through to a dict lookup that an object does not have.
     if isinstance(block, dict):
+        missing = [key for key in _VL_BLOCK_KEYS if key not in block]
         label = block.get("block_label", "")
         content = block.get("block_content", "")
         bbox = block.get("block_bbox")
     else:
+        missing = [name for name in _VL_BLOCK_MEMBERS if not hasattr(block, name)]
         label = getattr(block, "label", "")
         content = getattr(block, "content", "")
         bbox = getattr(block, "bbox", None)
+    # The empty defaults would turn a block of an unknown shape into a page
+    # without text and without an error. Only an absent field counts as
+    # missing, so the empty content of a blank page passes.
+    if check_shape and missing:
+        raise _unexpected_result(
+            "PaddleOCR-VL layout block",
+            f"is a {type(block).__name__} without {', '.join(missing)}",
+        )
     return {"label": label, "content": content, "bbox": bbox}
 
 
@@ -314,8 +330,13 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
 
     blocks = _required_field(page, "parsing_res_list", "PaddleOCR-VL page result")
     # The v1 pipeline answers {} and the parent then reads the blocks, so the
-    # spotting result and its fields are optional.
+    # spotting result and its fields are optional. A spotting result that
+    # has both fields holds the page's text, with words or blank, because
+    # paddlex builds the content of the spotting block from its texts. The
+    # blocks give the text only on a page without one, so only there does a
+    # block of an unknown shape fail.
     spotting = _get(page, "spotting_res")
+    spotting_complete = all(_get(spotting, key) is not None for key in ("rec_polys", "rec_texts"))
     if spotting is not None:
         spotting = {
             "rec_texts": _list_field(spotting, "rec_texts"),
@@ -331,7 +352,7 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "spotting_capable": spotting_capable,
         "spotting": spotting,
-        "blocks": [_vl_block(block) for block in blocks],
+        "blocks": [_vl_block(block, check_shape=not spotting_complete) for block in blocks],
     }
 
 
