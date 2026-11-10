@@ -336,7 +336,7 @@ def build_page(input_file: Path, options: Any) -> Page:
     lang = first_paddle_lang(getattr(options, "languages", None))
     page = Page(width=width, height=height, lang=lang, ocr_system=OCR_SYSTEM)
     spotting = result["spotting"]
-    if spotting is not None and len(spotting["rec_texts"]) > 0 and len(spotting["rec_polys"]) > 0:
+    if spotting is not None and spotting["rec_texts"] and spotting["rec_polys"]:
         _spotting_page(spotting, page)
     else:
         _ocr_page(result["blocks"], page)

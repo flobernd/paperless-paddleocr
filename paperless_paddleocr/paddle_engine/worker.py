@@ -71,26 +71,28 @@ _STDERR_DRAIN_SECONDS = 5
 class PaddleWorkerError(RuntimeError):
     """An error response of the worker, or a worker that failed.
 
-    ``error_type`` is the exception class name the worker reported, and empty
-    when the worker itself failed. ``error_chain`` holds the class names of
-    that exception and of each exception before it, as the worker reported
-    them, and is empty when the worker itself failed. ``worker_stderr``
-    holds the last stderr lines of a worker that failed, and is empty for an
-    error response.
+    ``error_chain`` holds the class names of the exception the worker
+    reported and of each exception before it, as the worker reported them,
+    and is empty when the worker itself failed. ``worker_stderr`` holds the
+    last stderr lines of a worker that failed, and is empty for an error
+    response.
     """
 
     def __init__(
         self,
         message: str,
         *,
-        error_type: str = "",
         error_chain: tuple[str, ...] = (),
         worker_stderr: str = "",
     ) -> None:
         super().__init__(message)
-        self.error_type = error_type
         self.error_chain = error_chain
         self.worker_stderr = worker_stderr
+
+    @property
+    def error_type(self) -> str:
+        """The exception class name the worker reported, empty when the worker itself failed."""
+        return self.error_chain[0] if self.error_chain else ""
 
 
 def worker_interpreter() -> str:
@@ -293,7 +295,6 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
     chain = error.get("chain")
     raise PaddleWorkerError(
         error["message"],
-        error_type=error["type"],
         error_chain=tuple(chain) if isinstance(chain, list) else (error["type"],),
     )
 

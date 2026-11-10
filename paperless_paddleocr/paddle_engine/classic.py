@@ -158,14 +158,14 @@ def build_page(input_file: Path, options: Any) -> Page:
     )
 
     page = Page(width=width, height=height, lang=_resolve_lang(options), ocr_system=OCR_SYSTEM)
-    sx, sy = _preprocess_scale(result.get("preprocessed_shape"), width, height)
+    sx, sy = _preprocess_scale(result["preprocessed_shape"], width, height)
 
-    texts = _as_list(result.get("rec_texts"))
-    scores = _as_list(result.get("rec_scores"))
-    polys = _as_list(result.get("rec_polys"))
-    token_lines = _as_list(result.get("text_word"))
-    token_boxes = _as_list(result.get("text_word_region"))
-    has_word_boxes = len(token_lines) > 0 and len(token_boxes) > 0
+    texts = result["rec_texts"]
+    scores = result["rec_scores"]
+    polys = result["rec_polys"]
+    token_lines = result["text_word"]
+    token_boxes = result["text_word_region"]
+    has_word_boxes = bool(token_lines and token_boxes)
     log.debug("classic: %d regions, word boxes=%s", len(texts), has_word_boxes)
 
     for idx, (text, score, poly) in enumerate(zip(texts, scores, polys, strict=False)):
@@ -176,7 +176,7 @@ def build_page(input_file: Path, options: Any) -> Page:
 
         line_tokens = _as_list(token_lines[idx]) if idx < len(token_lines) else []
         line_boxes = _as_list(token_boxes[idx]) if idx < len(token_boxes) else []
-        if len(line_tokens) > 0 and len(line_boxes) > 0:
+        if line_tokens and line_boxes:
             words = [
                 Word(w_text, _word_box(w_boxes, sx, sy), conf)
                 for w_text, w_boxes in _merge_subtokens(line_tokens, line_boxes)

@@ -66,9 +66,7 @@ def test_missing_doc_parser_dependency_names_the_worker_interpreter(tmp_path, mo
     # The doc-parser packages belong in the worker interpreter, not in the one
     # that runs paperless.
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
-    error = worker.PaddleWorkerError(
-        "paddlex says no", error_type="DependencyError", error_chain=("DependencyError",)
-    )
+    error = worker.PaddleWorkerError("paddlex says no", error_chain=("DependencyError",))
     _fail_with(monkeypatch, error)
     with pytest.raises(RuntimeError, match="/srv/paddle-venv/bin/python"):
         vl.build_page(_png(tmp_path), _opts())
@@ -80,7 +78,6 @@ def test_dependency_error_that_paddlex_wrapped_names_the_worker_interpreter(tmp_
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
     error = worker.PaddleWorkerError(
         "A dependency error occurred during pipeline creation.",
-        error_type="RuntimeError",
         error_chain=("RuntimeError", "DependencyError"),
     )
     _fail_with(monkeypatch, error)
@@ -89,6 +86,8 @@ def test_dependency_error_that_paddlex_wrapped_names_the_worker_interpreter(tmp_
 
 
 def test_other_worker_errors_keep_their_type_and_message(tmp_path, monkeypatch):
-    _fail_with(monkeypatch, worker.PaddleWorkerError("Place(undefined:0)", error_type="TypeError"))
+    _fail_with(
+        monkeypatch, worker.PaddleWorkerError("Place(undefined:0)", error_chain=("TypeError",))
+    )
     with pytest.raises(worker.PaddleWorkerError, match=r"Place\(undefined:0\)"):
         vl.build_page(_png(tmp_path), _opts())

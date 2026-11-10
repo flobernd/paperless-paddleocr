@@ -56,6 +56,7 @@ and points file descriptor 1 and ``sys.stdout`` at stderr.
 from __future__ import annotations
 
 import contextlib
+import functools
 import importlib
 import inspect
 import json
@@ -71,12 +72,6 @@ _ORIENTATION_MODEL_NAME = "PP-LCNet_x1_0_doc_ori"
 #: Classic result fields passed to the parent, each made a plain list.
 _CLASSIC_FIELDS = ("rec_polys", "rec_scores", "rec_texts", "text_word", "text_word_region")
 
-# Building a pipeline loads model weights from disk, so each one lives as
-# long as the worker. A cache key is the JSON text of the build arguments.
-_CLASSIC_ENGINES: dict[str, Any] = {}
-_ORIENTATION_MODELS: dict[str, Any] = {}
-_VL_PIPELINES: dict[str, Any] = {}
-
 # The first failure is kept because a package that fails half-way through
 # its import leaves its loaded submodules in sys.modules, and the next import
 # fails on them with an error that hides the cause, such as paddle's
@@ -84,30 +79,54 @@ _VL_PIPELINES: dict[str, Any] = {}
 _IMPORT_ERRORS: dict[str, str] = {}
 
 
-def _cached(cache: dict[str, Any], key: str, build: Callable[[], Any]) -> Any:
-    model = cache.get(key)
-    if model is None:
-        model = cache[key] = build()
-    return model
+# Building a pipeline loads model weights from disk, so each one lives as
+# long as the worker. A cache key is the JSON text of the build arguments.
+@functools.cache
+def _classic_engine(kwargs_json: str) -> Any:
+    from paddleocr import PaddleOCR
+
+    return PaddleOCR(**json.loads(kwargs_json))
 
 
-def _plain(value: Any) -> Any:
-    """``value`` with each nested numpy array or numpy scalar made a JSON type.
+@functools.cache
+def _orientation_model() -> Any:
+    from paddleocr import DocImgOrientationClassification
+
+    return DocImgOrientationClassification(model_name=_ORIENTATION_MODEL_NAME)
+
+
+@functools.cache
+def _vl_pipeline(config_json: str) -> Any:
+    import paddle
+    from paddleocr import PaddleOCRVL
+
+    # PaddleOCRVL.__init__ probes bfloat16 support on the active device
+    # before it applies device=, and with no device set the probe raises
+    # TypeError on Place(undefined:0). Recognition runs on the remote
+    # server, so pinning CPU first costs nothing.
+    paddle.set_device("cpu")
+    config = json.loads(config_json)
+    pipeline_kwargs = dict(config["kwargs"])
+    # Older paddleocr releases lack the parameter and run their only
+    # pipeline, which has no word spotting.
+    if "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters:
+        pipeline_kwargs["pipeline_version"] = config["pipeline_version"]
+    return PaddleOCRVL(**pipeline_kwargs)
+
+
+def _json_default(value: Any) -> Any:
+    """The JSON form of a numpy array or numpy scalar, for ``json.dumps``.
 
     The pipelines nest arrays inside Python lists and put numpy scalars into
-    score lists, so converting the top level alone leaves values that
-    ``json.dumps`` rejects.
+    score lists, and ``json.dumps`` calls this for each of them at any depth.
     """
-    if isinstance(value, dict):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_plain(item) for item in value]
+    # numpy arrays and numpy scalars both have tolist(), which spares the
+    # numpy import.
     if hasattr(value, "tolist"):
-        # numpy arrays and numpy scalars both have tolist(), which spares the
-        # numpy import. An object array keeps its elements as they are, so
-        # the output is walked again.
-        return _plain(value.tolist())
-    return value
+        return value.tolist()
+    # json expects a TypeError for a value it cannot encode, and this is the
+    # text it gives.
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
 
 
 def _get(container: Any, key: str) -> Any:
@@ -122,7 +141,7 @@ def _list_field(result: Any, key: str) -> Any:
     # without get() raises, so an unexpected type becomes an error response
     # instead of an empty page.
     value = result.get(key)
-    return [] if value is None else _plain(value)
+    return [] if value is None else value
 
 
 def _first(results: Any) -> Any:
@@ -186,14 +205,7 @@ def _ping(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def _classic(request: dict[str, Any]) -> dict[str, Any]:
-    kwargs = request["kwargs"]
-
-    def build() -> Any:
-        from paddleocr import PaddleOCR
-
-        return PaddleOCR(**kwargs)
-
-    engine = _cached(_CLASSIC_ENGINES, json.dumps(kwargs, sort_keys=True), build)
+    engine = _classic_engine(json.dumps(request["kwargs"], sort_keys=True))
     # Sub-word tokens and their boxes come only with return_word_box. The
     # parent joins them back into words with exact boxes.
     results = engine.predict(request["image"], return_word_box=True)
@@ -235,31 +247,12 @@ def _vl_block(block: Any) -> dict[str, Any]:
         label = getattr(block, "label", "")
         content = getattr(block, "content", "")
         bbox = getattr(block, "bbox", None)
-    return {"label": _plain(label), "content": _plain(content), "bbox": _plain(bbox)}
+    return {"label": label, "content": content, "bbox": bbox}
 
 
 def _vl(request: dict[str, Any]) -> dict[str, Any]:
-    kwargs = request["kwargs"]
-    version = request["pipeline_version"]
-
-    def build() -> Any:
-        import paddle
-        from paddleocr import PaddleOCRVL
-
-        # PaddleOCRVL.__init__ probes bfloat16 support on the active device
-        # before it applies device=, and with no device set the probe raises
-        # TypeError on Place(undefined:0). Recognition runs on the remote
-        # server, so pinning CPU first costs nothing.
-        paddle.set_device("cpu")
-        pipeline_kwargs = dict(kwargs)
-        # Older paddleocr releases lack the parameter and run their only
-        # pipeline, which has no word spotting.
-        if "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters:
-            pipeline_kwargs["pipeline_version"] = version
-        return PaddleOCRVL(**pipeline_kwargs)
-
-    key = json.dumps({"kwargs": kwargs, "pipeline_version": version}, sort_keys=True)
-    pipeline = _cached(_VL_PIPELINES, key, build)
+    config = {"kwargs": request["kwargs"], "pipeline_version": request["pipeline_version"]}
+    pipeline = _vl_pipeline(json.dumps(config, sort_keys=True))
     spotting_capable = _spotting_capable(pipeline)
     page = _first(
         pipeline.predict(
@@ -285,18 +278,14 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def _orientation(request: dict[str, Any]) -> dict[str, Any]:
-    def build() -> Any:
-        from paddleocr import DocImgOrientationClassification
-
-        return DocImgOrientationClassification(model_name=_ORIENTATION_MODEL_NAME)
-
-    model = _cached(_ORIENTATION_MODELS, _ORIENTATION_MODEL_NAME, build)
-    data = model.predict(request["image"])[0]
+    data = _orientation_model().predict(request["image"])[0]
     labels = _list_field(data, "label_names")
     scores = _list_field(data, "scores")
+    # Either field can be a numpy array, which has no truth value for more
+    # than one element.
     return {
-        "label": str(labels[0]) if labels else "0",
-        "score": float(scores[0]) if scores else 0.0,
+        "label": str(labels[0]) if len(labels) > 0 else "0",
+        "score": float(scores[0]) if len(scores) > 0 else 0.0,
     }
 
 
@@ -341,7 +330,9 @@ def _respond(line: str) -> str:
             raise ValueError(f"unknown op {name!r}")
         # Serialized inside the try, so a value json cannot encode becomes
         # an error response instead of ending the worker.
-        return json.dumps({"id": request_id, "ok": True, "result": op(request)})
+        return json.dumps(
+            {"id": request_id, "ok": True, "result": op(request)}, default=_json_default
+        )
     except Exception as exc:
         # An exception's __str__ can raise too, and unguarded that would end
         # the worker in the middle of a request.
@@ -381,7 +372,7 @@ def _disable_paddle_signal_handler() -> None:
     stderr. A paddle that does not import is left to ``ping`` to report.
     """
     paddle = _import("paddle")
-    if paddle is not None and hasattr(paddle, "disable_signal_handler"):
+    if paddle is not None:
         with contextlib.suppress(Exception):
             paddle.disable_signal_handler()
 
