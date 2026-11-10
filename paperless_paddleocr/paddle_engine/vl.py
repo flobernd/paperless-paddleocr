@@ -1,12 +1,15 @@
 """PaddleOCR-VL remote adapter.
 
-Layout analysis runs locally on CPU; the vision-language recognition step
-is delegated to a remote vLLM server. Two response shapes are handled:
+The local ``PaddleOCRVL`` pipeline runs on CPU with document orientation
+classification, unwarping and layout detection switched off, so no layout
+model runs on the paperless side. It sends the whole page image to a
+remote vLLM server for recognition, and this module places the words the
+server returns. Two response shapes are handled:
 
 * **spotting** - native per-word polygons (available when the installed
   ``paddleocr`` exposes ``pipeline_version``); words are clustered into
   reading lines geometrically.
-* **ocr** - layout blocks with a multi-line text transcription but no word
+* **ocr** - blocks with a multi-line text transcription but no word
   boxes; each block is split into lines and the words are positioned by the
   proportional estimator.
 """

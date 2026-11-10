@@ -371,9 +371,9 @@ def add_options(parser: Any) -> None:
         help=(
             "OCR engine variant: 'classic-cpu' (default, fast CNN pipeline on "
             "CPU), 'classic-gpu' (same CNN pipeline on a local NVIDIA GPU; "
-            "requires paddlepaddle-gpu), or 'vl-remote' (PaddleOCR-VL-1.5 "
-            "served by a remote paddleocr-genai-vllm-server; local layout "
-            "analysis only)."
+            "requires paddlepaddle-gpu), or 'vl-remote' (the page image goes "
+            "to a remote paddleocr-genai-vllm-server running PaddleOCR-VL-1.5, "
+            "and no layout model runs locally)."
         ),
     )
     paddle.add_argument(
@@ -457,18 +457,6 @@ def add_options(parser: Any) -> None:
         metavar="DIR",
         dest="paddle_rec_model_dir",
         help="Path to a custom text-recognition model directory.",
-    )
-    paddle.add_argument(
-        "--paddle-cls-model-name",
-        metavar="NAME",
-        dest="paddle_cls_model_name",
-        help=("Name of the textline-orientation model (e.g. PP-LCNet_x0_25_textline_ori)."),
-    )
-    paddle.add_argument(
-        "--paddle-cls-model-dir",
-        metavar="DIR",
-        dest="paddle_cls_model_dir",
-        help="Path to a custom textline-orientation model directory.",
     )
 
 

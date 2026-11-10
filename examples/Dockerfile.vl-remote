@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # paperless-ngx + paperless-paddleocr (vl-remote engine).
-# Layout analysis runs locally on CPU; VLM recognition is delegated to a
-# separate `paddleocr-genai-vllm-server` container - see
+# The plugin sends each page image to a separate `paddleocr-genai-vllm-server`
+# container for VLM recognition, and no layout model runs locally. See
 # docker-compose.vl-remote.yml for the matching runtime config.
 #
 # Build:

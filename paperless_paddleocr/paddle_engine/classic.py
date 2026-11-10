@@ -46,8 +46,6 @@ _MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
     ("paddle_det_model_dir", "text_detection_model_dir"),
     ("paddle_rec_model_name", "text_recognition_model_name"),
     ("paddle_rec_model_dir", "text_recognition_model_dir"),
-    ("paddle_cls_model_name", "textline_orientation_model_name"),
-    ("paddle_cls_model_dir", "textline_orientation_model_dir"),
 )
 
 
