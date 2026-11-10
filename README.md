@@ -14,9 +14,11 @@ Paperless continues to drive `ocrmypdf` exactly as before. Existing OCR configur
 keeps working, and archive PDFs remain PDF/A.
 
 > [!NOTE]
-> Requires paperless-ngx 3.0 or later with the parser plugin
+> Tested with paperless-ngx 3.0 to 3.4. Requires 3.0 or later with the parser plugin
 > system (the `paperless_ngx.parsers` entry-point group). On older releases
 > the entry point is not discovered and the plugin is silently inactive.
+> The 3.1 and later images ship Python 3.14, which PaddlePaddle does not support, so the plugin
+> runs PaddlePaddle in a separate Python 3.13 interpreter (see Installation).
 
 ## Features
 
@@ -58,14 +60,14 @@ Pick the method that matches your environment:
 Each engine has a matching recipe Dockerfile that pulls plugin source from a chosen Git ref, builds the wheel, and layers it
 plus the right paddle wheel onto `ghcr.io/paperless-ngx/paperless-ngx:latest`. Build args:
 
-- `PLUGIN_REF` - Git ref to build from. Use a release tag (`v0.1.0`) for reproducible builds; `master` tracks the latest snapshot.
+- `PLUGIN_REF` - Git ref to build from. Use a release tag (`v0.1.1`) for reproducible builds; `master` tracks the latest snapshot.
 - `PAPERLESS_TAG` - paperless-ngx base image tag (default `latest`). Set a version tag (`3.0`) for reproducible builds.
 
 #### `classic-cpu`
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.0 \
+    --build-arg PLUGIN_REF=v0.1.1 \
     -f examples/Dockerfile.classic-cpu \
     -t paperless-paddleocr:classic-cpu .
 ```
@@ -86,7 +88,7 @@ For local-GPU inference with `paddlepaddle-gpu`. Additional build arg:
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.0 \
+    --build-arg PLUGIN_REF=v0.1.1 \
     --build-arg CUDA_WHEEL=cu126 \
     -f examples/Dockerfile.classic-gpu \
     -t paperless-paddleocr:classic-gpu .
@@ -109,7 +111,7 @@ side.
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.0 \
+    --build-arg PLUGIN_REF=v0.1.1 \
     -f examples/Dockerfile.vl-remote \
     -t paperless-paddleocr:vl-remote .
 ```
@@ -142,13 +144,13 @@ pip install "paddlepaddle>=3.0"   # CPU
 pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu
 
 # 3. Install the plugin from a Git ref.
-pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.0"
+pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
 ```
 
 For the `vl-remote` engine install the `vl` extra instead:
 
 ```bash
-pip install "paperless-paddleocr[vl] @ git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.0"
+pip install "paperless-paddleocr[vl] @ git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
 ```
 
 Then restart paperless-ngx; the parser is discovered via its `paperless_ngx.parsers` entry point. Full recipe and
@@ -165,7 +167,7 @@ services:
       context: ./examples
       dockerfile: Dockerfile.classic-cpu
       args:
-        PLUGIN_REF: v0.1.0
+        PLUGIN_REF: v0.1.1
     image: paperless-paddleocr:classic-cpu
     restart: unless-stopped
     volumes:
@@ -198,13 +200,13 @@ On first startup the container will:
 2. Discover this package via the `paperless_ngx.parsers` entry point. Look for this log line:
 
    ```text
-   Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.0 by Florian Bernd (entrypoint: 'paddleocr').
+   Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1 by Florian Bernd (entrypoint: 'paddleocr').
    ```
 
 3. Route ingested documents through PaddleOCR instead of Tesseract. Each document logs:
 
    ```text
-   Document handled by third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.0 …
+   Document handled by third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1 …
    ```
 
 ### Updating

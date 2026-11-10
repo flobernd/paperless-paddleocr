@@ -7,7 +7,7 @@
 # Required `.env` keys alongside this file:
 #   PAPERLESS_DB_USER=<db-user>
 #   PAPERLESS_DB_PASSWORD=<strong-db-password>
-# Optional: PLUGIN_REF=v0.1.0 (release tag for reproducible builds).
+# Optional: PLUGIN_REF=v0.1.1 (release tag for reproducible builds).
 
 services:
   paperless:
