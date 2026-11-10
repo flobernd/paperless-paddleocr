@@ -26,10 +26,11 @@ worker answers each line with one JSON object per line on stdout, in order.
 Ops:
 
 * ``classic`` with ``image`` and ``kwargs`` (the ``PaddleOCR`` constructor
-  arguments): the first page result as ``rec_polys``, ``rec_scores``,
-  ``rec_texts``, ``text_word``, ``text_word_region`` (each a list, empty
-  when the result lacks it) and ``preprocessed_shape`` (``[h, w]`` of the
-  image the pipeline detected on, or null).
+  arguments): the first page result as ``rec_polys``, ``rec_scores`` and
+  ``rec_texts`` (lists of one length), ``text_word`` and
+  ``text_word_region`` (lists, empty when the result lacks them) and
+  ``preprocessed_shape`` (``[h, w]`` of the image the pipeline detected on,
+  or null).
 * ``orientation`` with ``image``: the top ``label`` and its ``score``.
 * ``ping``: ``cuda_devices``, ``paddle`` and ``paddleocr`` (versions, null
   when the import fails), ``paddle_error`` and ``paddleocr_error`` (null
@@ -41,8 +42,16 @@ Ops:
 * ``vl`` with ``image``, ``kwargs`` (the ``PaddleOCRVL`` constructor
   arguments without ``pipeline_version``) and ``pipeline_version``:
   ``blocks`` (``label``, ``content`` and ``bbox`` of each layout block),
-  ``spotting`` (``rec_texts`` and ``rec_polys``, or null) and
-  ``spotting_capable``.
+  ``spotting`` (``rec_texts`` and ``rec_polys``, lists of one length, each
+  empty when the spotting result lacks it, or null when the page result has
+  no spotting result) and ``spotting_capable``.
+
+A page without text still gives one page result with the fields the parent
+needs, so a result of another shape is an error response that names what is
+missing and the paddleocr version: a prediction without a page result, a
+classic page result without ``rec_polys``, ``rec_scores`` or ``rec_texts``
+or with lists of different lengths, a VL page result without
+``parsing_res_list``, or a spotting result whose two lists differ in length.
 
 Results are plain JSON: numpy arrays and scalars become lists and Python
 scalars at any depth.
@@ -69,8 +78,10 @@ from typing import Any, TextIO
 
 _ORIENTATION_MODEL_NAME = "PP-LCNet_x1_0_doc_ori"
 
-#: Classic result fields passed to the parent, each made a plain list.
-_CLASSIC_FIELDS = ("rec_polys", "rec_scores", "rec_texts", "text_word", "text_word_region")
+#: Classic result fields with one item per text region, which the parent needs.
+_CLASSIC_REGION_FIELDS = ("rec_polys", "rec_scores", "rec_texts")
+#: Classic result fields of the sub-word tokens, which the parent can do without.
+_CLASSIC_WORD_FIELDS = ("text_word", "text_word_region")
 
 # The first failure is kept because a package that fails half-way through
 # its import leaves its loaded submodules in sys.modules, and the next import
@@ -135,17 +146,38 @@ def _get(container: Any, key: str) -> Any:
     return None if getter is None else getter(key)
 
 
-def _list_field(result: Any, key: str) -> Any:
+def _unexpected_result(subject: str, problem: str) -> RuntimeError:
+    # The message is all the operator sees of a result this script cannot read.
+    import paddleocr
+
+    return RuntimeError(
+        f"The {subject} of paddleocr {_version(paddleocr)} {problem}. This paddleocr release "
+        "may be newer than the plugin supports."
+    )
+
+
+def _page_result(results: Any, pipeline: str) -> Any:
+    if len(results) == 0:
+        raise _unexpected_result(f"{pipeline} pipeline", "returned no page result")
+    return results[0]
+
+
+def _required_field(result: Any, key: str, subject: str) -> Any:
     # A field can be a numpy array, whose truth value raises for more than
-    # one element, so a missing field is told apart by identity. A result
-    # without get() raises, so an unexpected type becomes an error response
-    # instead of an empty page.
+    # one element, so a missing field is told apart by identity.
+    value = _get(result, key)
+    if value is None:
+        raise _unexpected_result(subject, f"has no {key}")
+    return value
+
+
+def _list_field(result: Any, key: str) -> Any:
+    # For a field the parent can do without, so a missing one counts as
+    # empty, told apart by identity as in _required_field. A result without
+    # get() raises, so an unexpected type becomes an error response instead
+    # of an empty page.
     value = result.get(key)
     return [] if value is None else value
-
-
-def _first(results: Any) -> Any:
-    return results[0] if len(results) > 0 else None
 
 
 def _version(module: Any) -> str:
@@ -208,10 +240,16 @@ def _classic(request: dict[str, Any]) -> dict[str, Any]:
     engine = _classic_engine(json.dumps(request["kwargs"], sort_keys=True))
     # Sub-word tokens and their boxes come only with return_word_box. The
     # parent joins them back into words with exact boxes.
-    results = engine.predict(request["image"], return_word_box=True)
-    if len(results) == 0:
-        return {**{key: [] for key in _CLASSIC_FIELDS}, "preprocessed_shape": None}
-    page = results[0]
+    page = _page_result(engine.predict(request["image"], return_word_box=True), "classic")
+    regions = {
+        key: _required_field(page, key, "classic page result") for key in _CLASSIC_REGION_FIELDS
+    }
+    lengths = [len(value) for value in regions.values()]
+    if len(set(lengths)) > 1:
+        raise _unexpected_result(
+            "classic page result",
+            f"has {', '.join(_CLASSIC_REGION_FIELDS)} of different lengths {lengths}",
+        )
 
     # Word boxes are in the space of the preprocessed image, which the parent
     # scales back to the page.
@@ -220,8 +258,8 @@ def _classic(request: dict[str, Any]) -> dict[str, Any]:
     preprocessed_shape = (
         [int(shape[0]), int(shape[1])] if shape is not None and len(shape) >= 2 else None
     )
-    fields = {key: _list_field(page, key) for key in _CLASSIC_FIELDS}
-    return {**fields, "preprocessed_shape": preprocessed_shape}
+    words = {key: _list_field(page, key) for key in _CLASSIC_WORD_FIELDS}
+    return {**regions, **words, "preprocessed_shape": preprocessed_shape}
 
 
 def _spotting_capable(pipeline: Any) -> bool:
@@ -254,26 +292,36 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
     config = {"kwargs": request["kwargs"], "pipeline_version": request["pipeline_version"]}
     pipeline = _vl_pipeline(json.dumps(config, sort_keys=True))
     spotting_capable = _spotting_capable(pipeline)
-    page = _first(
+    page = _page_result(
         pipeline.predict(
             request["image"],
             use_layout_detection=False,
             use_queues=False,
             prompt_label="spotting" if spotting_capable else "ocr",
         ),
+        "PaddleOCR-VL",
     )
 
+    blocks = _required_field(page, "parsing_res_list", "PaddleOCR-VL page result")
+    # The v1 pipeline answers {} and the parent then reads the blocks, so the
+    # spotting result and its fields are optional.
     spotting = _get(page, "spotting_res")
     if spotting is not None:
         spotting = {
             "rec_texts": _list_field(spotting, "rec_texts"),
             "rec_polys": _list_field(spotting, "rec_polys"),
         }
-    blocks = _get(page, "parsing_res_list")
+        # A release that renames one of the two fields leaves its list empty.
+        if len(spotting["rec_texts"]) != len(spotting["rec_polys"]):
+            raise _unexpected_result(
+                "PaddleOCR-VL spotting result",
+                f"has {len(spotting['rec_texts'])} rec_texts and "
+                f"{len(spotting['rec_polys'])} rec_polys",
+            )
     return {
         "spotting_capable": spotting_capable,
         "spotting": spotting,
-        "blocks": [] if blocks is None else [_vl_block(block) for block in blocks],
+        "blocks": [_vl_block(block) for block in blocks],
     }
 
 

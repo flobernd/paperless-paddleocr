@@ -55,6 +55,10 @@ class PaddleOCR:
     def predict(self, image, return_word_box=False):
         if self.kwargs.get("unexpected_result"):
             return ["not a page result"]
+        # The raw prediction a test chose, for the shapes a paddleocr release
+        # other than the tested one may return.
+        if "raw_results" in self.kwargs:
+            return self.kwargs["raw_results"]
         if self.kwargs.get("hang"):
             # Far past the one-second timeout of the hang test, which ends the
             # sleep with a kill.
@@ -135,12 +139,15 @@ class PaddleOCRVL:
             _fail_on_dependencies(kwargs["dependency_error"])
         _require_device()
         self.pipeline_version = pipeline_version
+        self.raw_results = kwargs.get("raw_results")
 
     def predict(self, image, use_layout_detection=None, use_queues=None, prompt_label=None):
         # The vl adapter runs no local layout model and no prediction queues,
         # and the worker must keep both off.
         if use_layout_detection is not False or use_queues is not False:
             raise ValueError("use_layout_detection and use_queues must be False")
+        if self.raw_results is not None:
+            return self.raw_results
         result = {
             # Older paddleocr releases return dicts, current paddlex returns
             # block objects.
@@ -165,6 +172,7 @@ class _PaddleOCRVLWithoutPipelineVersion(PaddleOCRVL):
     def __init__(self, device=None):
         _record_construction("PaddleOCRVL")
         _require_device()
+        self.raw_results = None
 
 
 if os.environ.get("FAKE_PADDLEOCR_VL_LEGACY") == "1":
