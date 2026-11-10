@@ -1,6 +1,7 @@
 """The vl-remote preflight must turn config mistakes into clear errors.
 
-urlopen is stubbed at the plugin module level; no network is touched.
+urlopen is stubbed at the plugin module level, so no network is touched, and
+a fake ``worker.call`` answers the worker ping that check_options sends first.
 """
 
 from __future__ import annotations
@@ -8,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import http.client
 import io
-import sys
 import types
 import urllib.error
 
@@ -16,16 +16,24 @@ import pytest
 from ocrmypdf.exceptions import MissingDependencyError
 
 from paperless_paddleocr import ocrmypdf_plugin
+from paperless_paddleocr.paddle_engine import worker
+
+
+def _ping(paddleocr_vl: bool = True) -> dict:
+    return {
+        "cuda_devices": 0,
+        "paddle": "3.2.1",
+        "paddleocr": "3.4.0",
+        "paddleocr_vl": paddleocr_vl,
+        "python": "3.13.5",
+    }
 
 
 @pytest.fixture(autouse=True)
-def _fresh_probe_cache(monkeypatch):
+def _fresh_caches(monkeypatch):
     ocrmypdf_plugin._PROBED_SERVERS.clear()
-    # check_options imports PaddleOCRVL first; satisfy it with a stub.
-    fake = types.ModuleType("paddleocr")
-    fake.PaddleOCRVL = object
-    fake.PaddleOCR = object
-    monkeypatch.setitem(sys.modules, "paddleocr", fake)
+    monkeypatch.setattr(worker, "_ping_result", None)
+    monkeypatch.setattr(worker, "call", lambda request: _ping())
     yield
     ocrmypdf_plugin._PROBED_SERVERS.clear()
 
@@ -107,3 +115,10 @@ def test_other_http_errors_do_not_block(monkeypatch):
 
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", not_found)
     ocrmypdf_plugin.check_options(_opts())
+
+
+def test_worker_without_paddleocr_vl_is_a_missing_dependency(monkeypatch):
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _ok_urlopen([]))
+    monkeypatch.setattr(worker, "call", lambda request: _ping(paddleocr_vl=False))
+    with pytest.raises(MissingDependencyError, match="PaddleOCR-VL is not available"):
+        ocrmypdf_plugin.check_options(_opts())

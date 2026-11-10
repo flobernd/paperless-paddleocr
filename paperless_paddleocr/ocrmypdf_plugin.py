@@ -46,7 +46,7 @@ from paperless_paddleocr import (
     ENGINE_CHOICES,
     STRATEGY_CHOICES,
 )
-from paperless_paddleocr.paddle_engine import PaddleOCREngine
+from paperless_paddleocr.paddle_engine import PaddleOCREngine, worker
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
 from paperless_paddleocr.paddle_engine.hocr import (
     Block,
@@ -467,7 +467,7 @@ def add_options(parser: Any) -> None:
 
 @ocrmypdf.hookimpl
 def check_options(options: Any) -> None:
-    """Validate the PaddleOCR options and that the requested engine variant is installed."""
+    """Validate the PaddleOCR options and that the worker interpreter can run the engine variant."""
     engine = getattr(options, "paddle_engine", DEFAULT_ENGINE)
     if engine not in ENGINE_CHOICES:
         # argparse validates --paddle-engine via `choices=` on CLI usage, but
@@ -484,14 +484,30 @@ def check_options(options: Any) -> None:
             f"Valid choices: {list(STRATEGY_CHOICES)}.",
         )
 
+    # The ping runs here and never at import: a process that forks after its
+    # worker started leaves the child a worker the child cannot reap, and the
+    # child's first call warns about a dead worker or hangs on a lock that was
+    # held at the fork.
+    ping = _ping_worker()
+    if ping["paddleocr"] is None:
+        raise MissingDependencyError(
+            "PaddleOCR is not installed in the worker interpreter "
+            f"{worker.worker_interpreter()}. Install paddlepaddle and paddleocr there "
+            "(see README, Installation).",
+        )
+    if ping["paddle"] is None:
+        raise MissingDependencyError(
+            "PaddlePaddle is not installed in the worker interpreter "
+            f"{worker.worker_interpreter()}. Install paddlepaddle there, or paddlepaddle-gpu "
+            "for the classic-gpu engine (see README, Installation).",
+        )
+
     if engine == "vl-remote":
-        try:
-            from paddleocr import PaddleOCRVL  # noqa: F401
-        except ImportError as e:
+        if not ping["paddleocr_vl"]:
             raise MissingDependencyError(
                 "PaddleOCR-VL is not available. Install it with: "
                 "pip install 'paddleocr[doc-parser]'",
-            ) from e
+            )
         server_url = (getattr(options, "paddle_vl_server_url", "") or "").strip()
         if not server_url:
             raise MissingDependencyError(
@@ -502,44 +518,29 @@ def check_options(options: Any) -> None:
         _probe_vl_server(server_url, resolve_vl_api_key(options))
         return
 
-    # classic-cpu / classic-gpu both need PaddleOCR importable locally.
-    try:
-        from paddleocr import PaddleOCR  # noqa: F401
-    except ImportError as e:
+    # paddlepaddle-gpu reports 0 devices when the host has no NVIDIA
+    # driver or when nvidia-container-toolkit isn't wired up - fail
+    # fast rather than crashing inside predict().
+    if engine == "classic-gpu" and ping["cuda_devices"] <= 0:
         raise MissingDependencyError(
-            "PaddleOCR is not installed. Install with: pip install paddlepaddle paddleocr "
-            "(or paddlepaddle-gpu for the classic-gpu engine).",
-        ) from e
+            "classic-gpu engine requested but no CUDA device is visible. "
+            "Check that the host has an NVIDIA driver, that "
+            "nvidia-container-toolkit is configured, and that the "
+            "container has GPU access (e.g. compose `deploy.resources."
+            "reservations.devices` or `docker run --gpus all`).",
+        )
 
-    if engine == "classic-gpu":
-        try:
-            import paddle
-        except ImportError as e:
-            raise MissingDependencyError(
-                "classic-gpu engine requires paddlepaddle-gpu. Build from "
-                "examples/Dockerfile.classic-gpu or install with: "
-                "pip install --index-url "
-                "https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu",
-            ) from e
-        # paddlepaddle-gpu reports 0 devices when the host has no NVIDIA
-        # driver or when nvidia-container-toolkit isn't wired up - fail
-        # fast rather than crashing inside predict().
-        try:
-            visible = int(paddle.device.cuda.device_count())
-        except Exception as e:  # pragma: no cover - defensive: paddle API drift
-            raise MissingDependencyError(
-                f"classic-gpu engine could not query CUDA devices: {e!s}. "
-                "Verify paddlepaddle-gpu is installed and the host NVIDIA "
-                "driver is reachable from inside the container.",
-            ) from e
-        if visible <= 0:
-            raise MissingDependencyError(
-                "classic-gpu engine requested but no CUDA device is visible. "
-                "Check that the host has an NVIDIA driver, that "
-                "nvidia-container-toolkit is configured, and that the "
-                "container has GPU access (e.g. compose `deploy.resources."
-                "reservations.devices` or `docker run --gpus all`).",
-            )
+
+def _ping_worker() -> dict[str, Any]:
+    try:
+        return worker.ping()
+    except worker.PaddleWorkerError as e:
+        raise MissingDependencyError(
+            "The paddle worker cannot run under the worker interpreter "
+            f"{worker.worker_interpreter()}: {e}\n"
+            "Install the worker venv as the README describes (Installation), or set "
+            "PAPERLESS_PADDLEOCR_PYTHON to an interpreter that has paddlepaddle and paddleocr.",
+        ) from e
 
 
 @ocrmypdf.hookimpl(tryfirst=True)

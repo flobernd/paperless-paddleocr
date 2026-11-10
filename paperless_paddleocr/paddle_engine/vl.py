@@ -1,12 +1,12 @@
 """PaddleOCR-VL remote adapter.
 
-The local ``PaddleOCRVL`` pipeline runs on CPU with document orientation
-classification, unwarping and layout detection switched off, so no layout
-model runs on the paperless side. It sends the whole page image to a
-remote vLLM server for recognition, and this module places the words the
+The ``PaddleOCRVL`` pipeline runs in the paddle worker on CPU, with document
+orientation classification, unwarping and layout detection switched off, so
+no layout model runs on the paperless side. It sends the whole page image to
+a remote vLLM server for recognition, and this module places the words the
 server returns. Two response shapes are handled:
 
-* **spotting** - native per-word polygons (available when the installed
+* **spotting** - native per-word polygons (available when the worker's
   ``paddleocr`` exposes ``pipeline_version``). The words are clustered into
   reading lines geometrically.
 * **ocr** - blocks with a multi-line text transcription but no word
@@ -16,11 +16,9 @@ server returns. Two response shapes are handled:
 
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 import re
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +26,7 @@ from PIL import Image
 
 from paperless_paddleocr import DEFAULT_VL_MODEL_NAME, DEFAULT_VL_PIPELINE_VERSION
 from paperless_paddleocr.languages import first_paddle_lang
+from paperless_paddleocr.paddle_engine import worker
 from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, words_from_text
 from paperless_paddleocr.paddle_engine.layout import (
@@ -35,11 +34,6 @@ from paperless_paddleocr.paddle_engine.layout import (
     group_into_lines,
     gutter_width,
 )
-
-try:
-    from paddleocr import PaddleOCRVL
-except ImportError:  # pragma: no cover - resolved at install time
-    PaddleOCRVL = None
 
 log = logging.getLogger("paperless.paddleocr.vl")
 
@@ -87,14 +81,6 @@ _TEXT_LABELS: frozenset[str] = frozenset(
 #: share them.
 _Spot = tuple[str, BBox, float]
 
-# Same rationale as classic.py: construction is expensive, Paddle's local
-# preprocessing predictors are not thread-safe, and ocrmypdf may call
-# generate_hocr from several worker threads. Serialising predict also keeps
-# at most one in-flight request per paperless worker on the remote server.
-_CACHE_LOCK = threading.Lock()
-_PIPELINE_CACHE: dict[tuple[Any, ...], Any] = {}
-_PREDICT_LOCK = threading.Lock()
-
 
 def _vl_option(options: Any, name: str, default: str = "") -> str:
     return (getattr(options, name, "") or "").strip() or default
@@ -111,25 +97,6 @@ def resolve_vl_api_key(options: Any) -> str:
         _vl_option(options, "paddle_vl_api_key")
         or os.environ.get("PAPERLESS_PADDLEOCR_VL_API_KEY", "").strip()
     )
-
-
-def _pipeline_key(options: Any) -> tuple[Any, ...]:
-    return (
-        _vl_option(options, "paddle_vl_server_url"),
-        _vl_option(options, "paddle_vl_model_name"),
-        resolve_vl_api_key(options),
-        _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION),
-    )
-
-
-def _get_pipeline(options: Any) -> Any:
-    key = _pipeline_key(options)
-    with _CACHE_LOCK:
-        pipeline = _PIPELINE_CACHE.get(key)
-        if pipeline is None:
-            pipeline = _build_pipeline(options)
-            _PIPELINE_CACHE[key] = pipeline
-    return pipeline
 
 
 def normalize_server_url(raw: str) -> str:
@@ -152,30 +119,20 @@ def normalize_server_url(raw: str) -> str:
     return url
 
 
-def _spotting_capable(pipeline: Any) -> bool:
-    """Word spotting shipped with the v1.5 pipeline; v1 predates it.
+def pipeline_version(options: Any) -> str:
+    """The PaddleOCR-VL pipeline version the worker builds for ``options``."""
+    return _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION)
 
-    Anything newer than v1 is assumed capable; build_page already falls back
-    to ocr mode when a response carries no spotting result.
+
+def pipeline_kwargs(options: Any) -> dict[str, Any]:
+    """The ``PaddleOCRVL`` constructor arguments for ``options``, without ``pipeline_version``.
+
+    The worker adds the version when its ``paddleocr`` takes the parameter.
+    The arguments carry the API key, so the log shows only whether it is set.
     """
-    version = getattr(pipeline, "pipeline_version", None)
-    return version is not None and version != "v1"
-
-
-def _build_pipeline(options: Any) -> Any:
-    import paddle
-
     url = normalize_server_url(_vl_option(options, "paddle_vl_server_url"))
     model_name = _vl_option(options, "paddle_vl_model_name", DEFAULT_VL_MODEL_NAME)
-    api_key = resolve_vl_api_key(options) or None
-
-    # PaddleOCRVL.__init__ probes paddle.amp.is_bfloat16_supported() against
-    # the active device before the device= kwarg is applied; with no device
-    # set that probe raises TypeError on Place(undefined:0). Pinning CPU
-    # first is harmless (recognition runs on the remote server regardless)
-    # and avoids the crash. Retained pending re-verification.
-    paddle.set_device("cpu")
-
+    api_key = resolve_vl_api_key(options)
     kwargs: dict[str, Any] = {
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
@@ -187,34 +144,13 @@ def _build_pipeline(options: Any) -> Any:
     }
     if api_key:
         kwargs["vl_rec_api_key"] = api_key
-
-    version = _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION)
-    # pipeline_version is a newer constructor parameter; older paddleocr
-    # falls back to its only pipeline (ocr mode, no word spotting).
-    if "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters:
-        kwargs["pipeline_version"] = version
-        log.debug("PaddleOCR-VL: pipeline_version=%s", version)
-    else:
-        log.debug("PaddleOCR-VL: pipeline_version unsupported (ocr mode only)")
-
     log.debug(
         "PaddleOCRVL url=%s model=%s api_key=%s",
         url,
         model_name,
         "<set>" if api_key else "<unset>",
     )
-    try:
-        return PaddleOCRVL(**kwargs)
-    except Exception as e:
-        # paddlex raises its own DependencyError when the doc-parser extra is
-        # missing; matching by name avoids importing paddlex here.
-        if type(e).__name__ == "DependencyError":
-            raise RuntimeError(
-                "PaddleOCR-VL dependencies are missing. Install the plugin "
-                "with the vl extra: pip install 'paperless-paddleocr[vl]' "
-                "(or pip install 'paddleocr[doc-parser]').",
-            ) from e
-        raise
+    return kwargs
 
 
 def _poly_baseline_y(poly: Any) -> float:
@@ -296,22 +232,12 @@ def _spotting_page(spotting: Any, page: Page) -> None:
             )
 
 
-def _ocr_page(parsing_res: Any, page: Page) -> None:
-    log.debug("VL ocr: %d layout blocks", len(parsing_res))
-    for block in parsing_res:
-        # Layout blocks are PaddleOCRVLBlock objects on current paddlex, but
-        # older paddleocr builds returned dicts with block_-prefixed keys.
-        # Read by type: a falsy attribute (notably content="", the
-        # PaddleOCRVLBlock default) must not fall through to dict .get(),
-        # which an object does not have.
-        if isinstance(block, dict):
-            label = block.get("block_label", "")
-            content = block.get("block_content", "")
-            bbox = block.get("block_bbox")
-        else:
-            label = getattr(block, "label", "")
-            content = getattr(block, "content", "")
-            bbox = getattr(block, "bbox", None)
+def _ocr_page(blocks: list[dict[str, Any]], page: Page) -> None:
+    log.debug("VL ocr: %d layout blocks", len(blocks))
+    for block in blocks:
+        label = block["label"]
+        content = block["content"]
+        bbox = block["bbox"]
 
         if not content or not content.strip():
             continue
@@ -377,34 +303,42 @@ def _warn_out_of_bounds(page: Page) -> None:
 def build_page(input_file: Path, options: Any) -> Page:
     """OCR ``input_file`` via the remote VL pipeline into a :class:`Page`."""
     log.debug("Running PaddleOCR-VL on %s", input_file)
-    pipeline = _get_pipeline(options)
-
     with Image.open(input_file) as img:
         width, height = img.size
 
-    has_spotting = _spotting_capable(pipeline)
-    with _PREDICT_LOCK:
-        result = pipeline.predict(
-            str(input_file),
-            use_layout_detection=False,
-            use_queues=False,
-            prompt_label="spotting" if has_spotting else "ocr",
+    version = pipeline_version(options)
+    try:
+        result = worker.call(
+            {
+                "op": "vl",
+                "image": str(input_file),
+                "kwargs": pipeline_kwargs(options),
+                "pipeline_version": version,
+            },
         )
+    except worker.PaddleWorkerError as e:
+        # paddlex raises its own DependencyError when the doc-parser extra is
+        # missing, and the worker reports the exception's class name.
+        if e.error_type == "DependencyError":
+            raise RuntimeError(
+                "PaddleOCR-VL dependencies are missing. Install the plugin "
+                "with the vl extra: pip install 'paperless-paddleocr[vl]' "
+                "(or pip install 'paddleocr[doc-parser]').",
+            ) from e
+        raise
+    log.debug(
+        "PaddleOCR-VL: pipeline_version=%s, spotting=%s",
+        version,
+        result["spotting_capable"],
+    )
 
     lang = first_paddle_lang(getattr(options, "languages", None))
     page = Page(width=width, height=height, lang=lang, ocr_system=OCR_SYSTEM)
-    if not result:
-        return page
-
-    page_result = result[0]
-    spotting = page_result.get("spotting_res") if hasattr(page_result, "get") else None
-    if spotting and spotting.get("rec_polys") and spotting.get("rec_texts"):
+    spotting = result["spotting"]
+    if spotting is not None and len(spotting["rec_texts"]) > 0 and len(spotting["rec_polys"]) > 0:
         _spotting_page(spotting, page)
     else:
-        parsing_res = (
-            page_result.get("parsing_res_list") if hasattr(page_result, "get") else None
-        ) or []
-        _ocr_page(parsing_res, page)
+        _ocr_page(result["blocks"], page)
 
     _warn_out_of_bounds(page)
     return page

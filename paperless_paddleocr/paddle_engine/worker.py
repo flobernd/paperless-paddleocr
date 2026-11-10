@@ -278,3 +278,28 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
     error = response["error"]
     log.debug("Paddle worker request %d failed:\n%s", request_id, error["traceback"])
     raise PaddleWorkerError(error["message"], error_type=error["type"])
+
+
+_ping_result: dict[str, Any] | None = None
+
+
+def ping() -> dict[str, Any]:
+    """The worker's answer to a ``ping`` request, asked once per process.
+
+    An answer that reports paddle or paddleocr missing is not kept, and
+    neither is a failed call, so a later call asks again once the operator
+    repaired the worker venv. Raises ``PaddleWorkerError`` as :func:`call`
+    does.
+    """
+    global _ping_result
+    if _ping_result is not None:
+        return _ping_result
+    result = call({"op": "ping"})
+    if result["paddle"] is not None and result["paddleocr"] is not None:
+        _ping_result = result
+    return result
+
+
+def cached_ping() -> dict[str, Any] | None:
+    """The answer :func:`ping` kept, or None before one. It never starts the worker."""
+    return _ping_result
