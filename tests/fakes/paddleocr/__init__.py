@@ -16,14 +16,33 @@ if os.environ.get("FAKE_PADDLE_FAIL_IMPORT") == "1":
 __version__ = "3.4.0"
 
 
+def _record_construction(name):
+    # The fakes live in the worker process, so the tests see which models the
+    # worker reuses only through this file.
+    log = os.environ.get("FAKE_PADDLE_CONSTRUCTION_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as stream:
+            stream.write(name + "\n")
+
+
+class UnprintableError(Exception):
+    def __str__(self):
+        raise RuntimeError("__str__ failed")
+
+
 class PaddleOCR:
     def __init__(self, **kwargs):
+        _record_construction("PaddleOCR")
+        if kwargs.get("unprintable_error"):
+            raise UnprintableError()
         self.kwargs = kwargs
 
     def predict(self, image, return_word_box=False):
+        if self.kwargs.get("unexpected_result"):
+            return ["not a page result"]
         if self.kwargs.get("noisy"):
-            # Paddle libraries write to standard output from Python and from
-            # native code, and neither may reach the worker's protocol lines.
+            # One write from Python and one from native code, and neither may
+            # reach the worker's protocol lines.
             print("noise from python")
             os.write(1, b"noise from native code\n")
         result = {
@@ -63,10 +82,15 @@ def _require_device():
 
 class PaddleOCRVL:
     def __init__(self, pipeline_version=None, **kwargs):
+        _record_construction("PaddleOCRVL")
         _require_device()
         self.pipeline_version = pipeline_version
 
     def predict(self, image, use_layout_detection=None, use_queues=None, prompt_label=None):
+        # The vl adapter runs no local layout model and no prediction queues,
+        # and the worker must keep both off.
+        if use_layout_detection is not False or use_queues is not False:
+            raise ValueError("use_layout_detection and use_queues must be False")
         result = {
             # Older paddleocr releases return dicts, current paddlex returns
             # block objects.
@@ -89,6 +113,7 @@ class _PaddleOCRVLWithoutPipelineVersion(PaddleOCRVL):
     """The releases before the pipeline_version parameter, which reject it."""
 
     def __init__(self, device=None):
+        _record_construction("PaddleOCRVL")
         _require_device()
 
 
@@ -98,7 +123,7 @@ if os.environ.get("FAKE_PADDLEOCR_VL_LEGACY") == "1":
 
 class DocImgOrientationClassification:
     def __init__(self, model_name=None):
-        pass
+        _record_construction("DocImgOrientationClassification")
 
     def predict(self, image):
         return [{"label_names": ["90"], "scores": [0.97]}]

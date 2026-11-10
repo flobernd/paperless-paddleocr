@@ -26,9 +26,9 @@ Ops:
   when the result lacks it) and ``preprocessed_shape`` (``[h, w]`` of the
   image the pipeline detected on, or null).
 * ``orientation`` with ``image``: the top ``label`` and its ``score``.
-* ``ping``: ``classic_engines`` (cached classic engines), ``cuda_devices``,
-  ``paddle`` and ``paddleocr`` (versions, null when the import fails),
-  ``paddleocr_vl`` (whether ``PaddleOCRVL`` imports) and ``python``.
+* ``ping``: ``cuda_devices``, ``paddle`` and ``paddleocr`` (versions, null
+  when the import fails), ``paddleocr_vl`` (whether ``PaddleOCRVL``
+  imports) and ``python``.
 * ``vl`` with ``image``, ``kwargs`` (the ``PaddleOCRVL`` constructor
   arguments without ``pipeline_version``) and ``pipeline_version``:
   ``blocks`` (``label``, ``content`` and ``bbox`` of each layout block),
@@ -100,10 +100,12 @@ def _get(container: Any, key: str) -> Any:
     return None if getter is None else getter(key)
 
 
-def _list_field(container: Any, key: str) -> Any:
+def _list_field(result: Any, key: str) -> Any:
     # A field can be a numpy array, whose truth value raises for more than
-    # one element, so a missing field is told apart by identity.
-    value = _get(container, key)
+    # one element, so a missing field is told apart by identity. A result
+    # without get() raises, so an unexpected type becomes an error response
+    # instead of an empty page.
+    value = result.get(key)
     return [] if value is None else _plain(value)
 
 
@@ -117,7 +119,6 @@ def _version(module: Any) -> str:
 
 def _ping(request: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "classic_engines": len(_CLASSIC_ENGINES),
         "cuda_devices": 0,
         "paddle": None,
         "paddleocr": None,
@@ -164,11 +165,14 @@ def _classic(request: dict[str, Any]) -> dict[str, Any]:
     engine = _cached(_CLASSIC_ENGINES, json.dumps(kwargs, sort_keys=True), build)
     # Sub-word tokens and their boxes come only with return_word_box. The
     # parent joins them back into words with exact boxes.
-    page = _first(engine.predict(request["image"], return_word_box=True))
+    results = engine.predict(request["image"], return_word_box=True)
+    if len(results) == 0:
+        return {**{key: [] for key in _CLASSIC_FIELDS}, "preprocessed_shape": None}
+    page = results[0]
 
     # Word boxes are in the space of the preprocessed image, which the parent
     # scales back to the page.
-    image = _get(_get(page, "doc_preprocessor_res"), "output_img")
+    image = _get(page.get("doc_preprocessor_res"), "output_img")
     shape = getattr(image, "shape", None)
     preprocessed_shape = (
         [int(shape[0]), int(shape[1])] if shape is not None and len(shape) >= 2 else None
@@ -289,9 +293,15 @@ def _respond(line: str) -> str:
         # an error response instead of ending the worker.
         return json.dumps({"id": request_id, "ok": True, "result": op(request)})
     except Exception as exc:
+        # An exception's __str__ can raise too, and unguarded that would end
+        # the worker in the middle of a request.
+        try:
+            message = str(exc)
+        except Exception:
+            message = "<str() of the exception failed>"
         error = {
             "type": type(exc).__name__,
-            "message": str(exc),
+            "message": message,
             "traceback": traceback.format_exc(),
         }
         return json.dumps({"id": request_id, "ok": False, "error": error})
