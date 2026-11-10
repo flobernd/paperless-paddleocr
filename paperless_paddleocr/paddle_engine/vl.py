@@ -321,9 +321,9 @@ def build_page(input_file: Path, options: Any) -> Page:
         # missing, and the worker reports the exception's class name.
         if e.error_type == "DependencyError":
             raise RuntimeError(
-                "PaddleOCR-VL dependencies are missing. Install the plugin "
-                "with the vl extra: pip install 'paperless-paddleocr[vl]' "
-                "(or pip install 'paddleocr[doc-parser]').",
+                "PaddleOCR-VL dependencies are missing in the worker interpreter "
+                f"{worker.worker_interpreter()}. Install paddle-requirements-vl.txt there "
+                "(see README, Installation).",
             ) from e
         raise
     log.debug(

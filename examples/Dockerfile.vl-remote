@@ -7,7 +7,7 @@
 #
 # Build:
 #   docker build \
-#     --build-arg PLUGIN_REF=v0.1.0 \
+#     --build-arg PLUGIN_REF=v0.1.1 \
 #     -f examples/Dockerfile.vl-remote \
 #     -t paperless-paddleocr:vl-remote .
 
@@ -15,14 +15,14 @@ ARG PLUGIN_REF=master
 ARG PAPERLESS_TAG=latest
 
 # --- Stage 1: build the plugin wheel from source --------------------------
-FROM python:3.12-slim AS plugin
+FROM python:3.13-slim AS plugin
 ARG PLUGIN_REF
 ADD https://github.com/flobernd/paperless-paddleocr.git#${PLUGIN_REF} /src
 WORKDIR /src
 RUN pip install --no-cache-dir build \
  && python -m build --wheel --outdir /dist
 
-# --- Stage 2: layer the plugin + CPU paddle onto paperless-ngx ------------
+# --- Stage 2: layer the worker venv + the plugin onto paperless-ngx -------
 FROM ghcr.io/paperless-ngx/paperless-ngx:${PAPERLESS_TAG}
 
 RUN apt-get update \
@@ -35,10 +35,30 @@ RUN apt-get update \
       libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
+# The base image ships uv too, at a version that varies with the tag.
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /uvx /usr/local/bin/
+
+# PaddlePaddle supports no Python newer than 3.13, and the paperless-ngx 3.1
+# and later images run 3.14, so PaddlePaddle gets a venv of its own at the
+# path the plugin looks for. uv would install the interpreter under /root,
+# which the paperless user that runs the Celery workers cannot traverse.
+# The VL requirements add the doc-parser extra that PaddleOCR-VL needs.
+ENV UV_PYTHON_INSTALL_DIR=/opt/paperless-paddleocr/python
+COPY --from=plugin /src/paddle-requirements-vl.txt /tmp/plugin/
+RUN uv python install 3.13 \
+ && uv venv --python 3.13 /opt/paperless-paddleocr/venv \
+ && uv pip install --no-cache --python /opt/paperless-paddleocr/venv/bin/python \
+      -r /tmp/plugin/paddle-requirements-vl.txt \
+ && chmod -R a+rX /opt/paperless-paddleocr
+
+# The plugin goes into the interpreter that runs paperless. The paperless
+# user, which runs the Celery workers and with them the paddle worker,
+# downloads the models into its ~/.paddlex, and a new named volume mounted
+# there takes the ownership of the image's directory.
 COPY --from=plugin /dist/*.whl /tmp/plugin/
-RUN pip install --no-cache-dir "paddlepaddle>=3.0" \
- && WHEEL=$(ls /tmp/plugin/*.whl) \
- && pip install --no-cache-dir "${WHEEL}[vl]" \
- && rm -rf /tmp/plugin
+RUN PY=$([ -x /usr/src/paperless/.venv/bin/python ] && echo /usr/src/paperless/.venv/bin/python || command -v python3) \
+ && "$PY" -m pip install --no-cache-dir /tmp/plugin/*.whl \
+ && rm -rf /tmp/plugin \
+ && install -d -o paperless -g paperless /usr/src/paperless/.paddlex
 
 ENV PAPERLESS_PADDLEOCR_ENGINE=vl-remote
