@@ -52,6 +52,7 @@ import queue
 import subprocess
 import sys
 import threading
+from concurrent.futures import Future
 from pathlib import Path
 from typing import IO, Any
 
@@ -143,27 +144,27 @@ def _follows_protocol(response: dict[str, Any]) -> bool:
 
 
 class _Worker:
-    """One worker process, with a thread on each of its output pipes."""
+    """One worker process, with a thread on each of its output pipes.
+
+    A third thread starts the process and lives until :meth:`stop`.
+    """
 
     def __init__(self) -> None:
         interpreter = worker_interpreter()
+        self._stopped = threading.Event()
+        started: Future[subprocess.Popen[str]] = Future()
+        # On Linux the worker dies when the thread that started it ends.
+        # ocrmypdf calls from page threads that end with their document, so
+        # the worker starts from a thread of its own.
+        self._parent_thread = threading.Thread(
+            target=self._parent,
+            args=(interpreter, started),
+            name="paddle-worker-parent",
+            daemon=True,
+        )
+        self._parent_thread.start()
         try:
-            # The worker reads stdin between requests only. When this process
-            # dies, the kernel closes the pipe, so an idle worker exits at the
-            # EOF and a busy one once its request ends, and the parent needs
-            # no signal handler or exit hook to end it.
-            self.process = subprocess.Popen(
-                [interpreter, "-P", str(WORKER_SCRIPT)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                # A stderr thread that died on an undecodable byte would stop
-                # draining the pipe and stall the worker.
-                encoding="utf-8",
-                errors="replace",
-                env=worker_environment(),
-            )
+            self.process = started.result()
         except OSError as exc:
             raise PaddleWorkerError(f"Cannot start the paddle worker {interpreter}: {exc}") from exc
         log.debug("Started the paddle worker %s (pid %d)", interpreter, self.process.pid)
@@ -186,6 +187,34 @@ class _Worker:
             daemon=True,
         )
         self._stderr_thread.start()
+
+    def _parent(self, interpreter: str, started: Future[subprocess.Popen[str]]) -> None:
+        try:
+            # On Linux the worker asks the kernel to kill it when this thread
+            # ends, which happens at stop() or when this process dies, so a
+            # worker in the middle of a request ends with this process too.
+            # Elsewhere the worker exits at the EOF of stdin, which it reads
+            # between requests only, so a busy worker ends once its request
+            # ends. Either way the client needs no signal handler or exit hook
+            # to end it.
+            process = subprocess.Popen(
+                [interpreter, "-P", str(WORKER_SCRIPT), "--parent-pid", str(os.getpid())],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                # A stderr thread that died on an undecodable byte would stop
+                # draining the pipe and stall the worker.
+                encoding="utf-8",
+                errors="replace",
+                env=worker_environment(),
+            )
+        except BaseException as exc:
+            # The caller waits for the outcome, so any exception goes there.
+            started.set_exception(exc)
+            return
+        started.set_result(process)
+        self._stopped.wait()
 
     def _read_stdout(self, stream: IO[str]) -> None:
         try:
@@ -247,9 +276,16 @@ class _Worker:
         )
 
     def stop(self) -> str:
-        """Kill and reap the process, and return the last lines of its stderr."""
+        """Kill and reap the process, and return the last lines of its stderr.
+
+        The thread that started the process ends too.
+        """
         self.process.kill()
         self.process.wait()
+        self._stopped.set()
+        # In a child forked after the start the thread does not exist, and
+        # join returns at once.
+        self._parent_thread.join()
         self._stderr_thread.join(_STDERR_DRAIN_SECONDS)
         # The process is gone, so a request left in the write buffer has
         # nowhere to go.

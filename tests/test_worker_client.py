@@ -7,10 +7,16 @@ with the fake ``paddle`` and ``paddleocr`` packages of ``tests/fakes`` on its
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import select
+import shlex
 import signal
+import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -21,6 +27,7 @@ from PIL import Image
 from paperless_paddleocr.paddle_engine import worker
 
 FAKES = Path(__file__).resolve().parent / "fakes"
+LATE_INTERPRETER = FAKES / "late_interpreter.py"
 
 
 @pytest.fixture
@@ -271,6 +278,94 @@ def test_missing_interpreter_is_a_worker_error(fake_worker_env, monkeypatch, tmp
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", str(tmp_path / "missing" / "python"))
     with pytest.raises(worker.PaddleWorkerError):
         worker.call({"op": "ping"})
+
+
+def test_worker_started_from_a_thread_that_ended_keeps_its_models(
+    fake_worker_env, monkeypatch, png, tmp_path
+):
+    construction_log = tmp_path / "constructions.log"
+    monkeypatch.setenv("FAKE_PADDLE_CONSTRUCTION_LOG", str(construction_log))
+    # Like an ocrmypdf page thread, which ends with its document.
+    page_thread = threading.Thread(target=worker.call, args=(_classic(png),))
+    page_thread.start()
+    page_thread.join()
+    worker.call(_classic(png))
+    assert construction_log.read_text(encoding="utf-8").splitlines() == ["PaddleOCR"]
+
+
+#: Sends one classic request, which the fake answers only after 30 s.
+_HANGING_PARENT = (
+    "import sys\n"
+    "from paperless_paddleocr.paddle_engine import worker\n"
+    "kwargs = {'device': 'cpu', 'hang': True}\n"
+    "worker.call({'op': 'classic', 'image': sys.argv[1], 'kwargs': kwargs})\n"
+)
+
+
+def _pid_when_written(path: Path) -> int:
+    deadline = time.monotonic() + 30
+    while not path.exists():
+        assert time.monotonic() < deadline, f"no pid in {path} within 30 s"
+        time.sleep(0.05)
+    return int(path.read_text(encoding="utf-8"))
+
+
+def _kill_if_running(pidfd: int) -> None:
+    # A worker that outlives its parent sleeps on as an orphan.
+    with contextlib.suppress(ProcessLookupError):
+        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+
+
+def _worker_exits_after_its_parent_is_killed(png: Path, pid_file: Path) -> bool:
+    """Whether the worker exits within 10 s after the kill of the process that called it.
+
+    The parent sends a classic request that hangs, and a fake writes the
+    worker's pid to ``pid_file`` before the parent is killed with SIGKILL.
+    """
+    with contextlib.ExitStack() as cleanup:
+        parent = cleanup.enter_context(
+            subprocess.Popen([sys.executable, "-c", _HANGING_PARENT, str(png)])
+        )
+        # The kill runs before Popen.__exit__ reaps the parent.
+        cleanup.callback(parent.kill)
+        pidfd = os.pidfd_open(_pid_when_written(pid_file))
+        cleanup.callback(os.close, pidfd)
+        cleanup.callback(_kill_if_running, pidfd)
+        parent.send_signal(signal.SIGKILL)
+        # The pidfd turns readable once the worker exits, whether or not its
+        # new parent has reaped it.
+        ready, _, _ = select.select([pidfd], [], [], 10)
+        return bool(ready)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the parent-death signal exists on Linux only")
+def test_worker_in_the_paddle_import_dies_with_its_killed_parent(
+    fake_worker_env, monkeypatch, png, tmp_path
+):
+    # The paddle import at the start of the worker is the first step that can
+    # take long, and the worker blocks there before it reads the request.
+    pid_file = tmp_path / "worker.pid"
+    monkeypatch.setenv("FAKE_PADDLEPADDLE_HANG_IMPORT", str(pid_file))
+    assert _worker_exits_after_its_parent_is_killed(png, pid_file), "the worker outlived its parent"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the parent-death signal exists on Linux only")
+def test_worker_whose_parent_died_before_its_start_exits_at_once(
+    fake_worker_env, monkeypatch, png, tmp_path
+):
+    # The kernel sends no signal for a parent that died before the worker
+    # asked for one, and the worker of this interpreter asks only after the
+    # parent's death, with the parent's request waiting in its stdin.
+    interpreter = tmp_path / "python"
+    interpreter.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(LATE_INTERPRETER))} "$@"\n',
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o755)
+    pid_file = tmp_path / "worker.pid"
+    monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", str(interpreter))
+    monkeypatch.setenv("FAKE_INTERPRETER_PID_FILE", str(pid_file))
+    assert _worker_exits_after_its_parent_is_killed(png, pid_file), "the worker ran on as an orphan"
 
 
 def test_environment_drops_the_omp_thread_limit(monkeypatch):

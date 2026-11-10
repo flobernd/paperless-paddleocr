@@ -37,10 +37,10 @@ def construction_log(tmp_path: Path) -> Path:
 def spawn_worker(construction_log: Path) -> Iterator[Spawn]:
     with contextlib.ExitStack() as stack:
 
-        def spawn(**env: str) -> subprocess.Popen[str]:
+        def spawn(*args: str, **env: str) -> subprocess.Popen[str]:
             proc = stack.enter_context(
                 subprocess.Popen(
-                    [sys.executable, str(WORKER_PATH)],
+                    [sys.executable, str(WORKER_PATH), *args],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     text=True,
@@ -398,3 +398,32 @@ def test_stdout_writes_of_paddle_libraries_miss_the_protocol(worker, png):
 def test_worker_exits_on_stdin_eof(worker):
     worker.stdin.close()
     assert worker.wait(timeout=10) == 0
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the parent-death signal exists on Linux only")
+def test_worker_whose_parent_is_not_the_given_process_exits_at_once(spawn_worker):
+    # The parent of this test process is not the worker's parent, as for a
+    # worker whose parent died before the worker asked for the signal.
+    worker = spawn_worker("--parent-pid", str(os.getppid()))
+    assert worker.wait(timeout=10) != 0
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the parent-death signal exists on Linux only")
+def test_parent_check_exits_with_status_1_when_nobody_reads_stderr():
+    # A parent that died held the only reader of the worker's stderr. Without
+    # PYTHONUNBUFFERED, text left in the buffer of sys.stderr fails the flush
+    # at exit, and the status becomes 120.
+    reader, writer = os.pipe()
+    os.close(reader)
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONUNBUFFERED"}
+    try:
+        worker = subprocess.run(
+            [sys.executable, str(WORKER_PATH), "--parent-pid", str(os.getppid())],
+            stdin=subprocess.DEVNULL,
+            stderr=writer,
+            env=env,
+            timeout=10,
+        )
+    finally:
+        os.close(writer)
+    assert worker.returncode == 1

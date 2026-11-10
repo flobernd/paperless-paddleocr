@@ -304,7 +304,9 @@ The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocr
 > [!NOTE]
 > The plugin imports no paddle module in the paperless-ngx process. The first document of a paperless worker process
 > starts a paddle worker process under the worker venv's interpreter, and later documents of that process reuse it with
-> the models it loaded. The worker venv of the `classic-cpu` recipe takes about 1.3 GB in the image, its Python 3.13
+> the models it loaded. On Linux the paddle worker ends with that paperless worker process, also when the process is
+> killed in the middle of a document, for example at the task time limit that `PAPERLESS_WORKER_TIMEOUT` sets or by the
+> out-of-memory killer. The worker venv of the `classic-cpu` recipe takes about 1.3 GB in the image, its Python 3.13
 > included.
 
 > [!NOTE]
@@ -434,6 +436,12 @@ PaddleOCR. That interpreter needs `paddlepaddle` (or `paddlepaddle-gpu`) and `pa
 for `vl-remote` (see [Installation](#installation)). It must be Python 3.11 to 3.13, because the plugin starts the
 worker with `-P`, which Python 3.11 introduced, and PaddlePaddle ships wheels up to Python 3.13. It does not need the
 plugin: the worker script ships inside the plugin and imports nothing beyond the standard library, paddle and paddleocr.
+
+The value is the path of the interpreter, or of a script that ends in `exec` with the interpreter, for example
+`exec /opt/paperless-paddleocr/venv/bin/python "$@"`. On Linux the worker exits at its start when its parent process is
+not the paperless-ngx process that started it, so that it cannot stay behind as an orphan of a process that died. A
+script that runs Python without `exec` stays in between as the worker's parent, so each worker exits at once (see
+[Troubleshooting](#the-paddle-worker-exits-because-its-parent-is-process-m-not-process-n)).
 
 When the variable is unset, the plugin uses `/opt/paperless-paddleocr/venv/bin/python`, the venv that the recipes and
 the bootstrap scripts create, when that file exists, and otherwise the interpreter that runs paperless-ngx. The recipes
@@ -606,6 +614,15 @@ uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r pa
 # vl-remote, in a venv built for it (the next entry covers other venvs)
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r paddle-requirements-vl.txt
 ```
+
+### "The paddle worker exits because its parent is process M, not process N"
+
+The worker found at its start that its parent process is not the paperless-ngx process that started it. On Linux it then
+exits with status 1, so that it cannot run on as an orphan, and the error of the document shows this line under
+`Last lines of its stderr`. When this happens for each document,
+[`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python) names a script that runs Python as its child process. End
+the script with `exec` and the interpreter, for example `exec /opt/paperless-paddleocr/venv/bin/python "$@"`, or set the
+variable to the interpreter itself.
 
 ### `vl-remote` fails with "PaddleOCR-VL dependencies are missing" or "PaddleOCR-VL is not available"
 

@@ -6,7 +6,18 @@ set for the worker process alone.
 
 import os
 import sys
+import time
 from types import ModuleType, SimpleNamespace
+
+# Writes the worker's pid to the named file and sleeps, as a slow import of
+# the real package, so a test knows the worker is blocked in the import. The
+# rename means a reader never finds the file empty.
+_hang_pid_file = os.environ.get("FAKE_PADDLEPADDLE_HANG_IMPORT")
+if _hang_pid_file:
+    with open(_hang_pid_file + ".tmp", "w", encoding="utf-8") as _stream:
+        _stream.write(str(os.getpid()))
+    os.replace(_hang_pid_file + ".tmp", _hang_pid_file)
+    time.sleep(30)
 
 # Fails the paddle import. FAKE_PADDLE_FAIL_IMPORT fails the paddleocr
 # import.

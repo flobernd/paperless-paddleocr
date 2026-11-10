@@ -60,8 +60,9 @@ class PaddleOCR:
         if "raw_results" in self.kwargs:
             return self.kwargs["raw_results"]
         if self.kwargs.get("hang"):
-            # Far past the one-second timeout of the hang test, which ends the
-            # sleep with a kill.
+            # Far past the one-second timeout of the hang test and the
+            # deadline of the test of a worker that starts after its parent
+            # died, so the sleep ends in a kill.
             time.sleep(30)
         if self.kwargs.get("flood_stderr"):
             # More than a pipe buffer holds, so a parent that does not read
