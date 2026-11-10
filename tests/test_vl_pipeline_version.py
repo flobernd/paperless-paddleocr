@@ -1,33 +1,22 @@
+"""The VL request carries the pipeline version and the constructor kwargs.
+
+The paddle worker builds the ``PaddleOCRVL`` pipeline from these values. The
+tests of the install hint replace ``worker.call`` with a function that raises
+the error the worker client reports.
+"""
+
 from __future__ import annotations
 
-import sys
 import types
-from typing import Any
+from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from paperless_paddleocr.paddle_engine import vl
-
-
-class _CapturingPipeline:
-    last_kwargs: dict[str, Any] = {}
-
-    # pipeline_version is declared explicitly (not swallowed by **kwargs)
-    # because _build_pipeline feature-detects it via inspect.signature.
-    def __init__(self, pipeline_version: str = "v1.6", **kwargs: Any) -> None:
-        _CapturingPipeline.last_kwargs = {"pipeline_version": pipeline_version, **kwargs}
-        self.pipeline_version = pipeline_version
+from paperless_paddleocr.paddle_engine import vl, worker
 
 
-@pytest.fixture(autouse=True)
-def _stub_paddle(monkeypatch):
-    fake_paddle = types.ModuleType("paddle")
-    fake_paddle.set_device = lambda device: None
-    monkeypatch.setitem(sys.modules, "paddle", fake_paddle)
-    monkeypatch.setattr(vl, "PaddleOCRVL", _CapturingPipeline)
-
-
-def _opts(version: str | None) -> types.SimpleNamespace:
+def _opts(version: str | None = None) -> types.SimpleNamespace:
     opts = types.SimpleNamespace(
         languages=["en"],
         paddle_engine="vl-remote",
@@ -40,37 +29,48 @@ def _opts(version: str | None) -> types.SimpleNamespace:
     return opts
 
 
+def _png(tmp_path: Path) -> Path:
+    img = tmp_path / "page.png"
+    Image.new("RGB", (60, 40), "white").save(img)
+    return img
+
+
+def _fail_with(monkeypatch: pytest.MonkeyPatch, error: worker.PaddleWorkerError) -> None:
+    def call(request: dict) -> dict:
+        raise error
+
+    monkeypatch.setattr(worker, "call", call)
+
+
 def test_default_pipeline_version_is_v15():
-    vl._build_pipeline(_opts(None))
-    assert _CapturingPipeline.last_kwargs["pipeline_version"] == "v1.5"
+    assert vl.pipeline_version(_opts()) == "v1.5"
 
 
 def test_configured_pipeline_version_is_passed_through():
-    vl._build_pipeline(_opts("v1.6"))
-    assert _CapturingPipeline.last_kwargs["pipeline_version"] == "v1.6"
+    assert vl.pipeline_version(_opts("v1.6")) == "v1.6"
 
 
-def test_api_key_from_the_environment_reaches_the_pipeline(monkeypatch):
+def test_pipeline_kwargs_point_the_client_at_the_v1_api_of_the_server():
+    # The OpenAI client appends /chat/completions to the URL as it is, and the
+    # server answers only under /v1.
+    assert vl.pipeline_kwargs(_opts())["vl_rec_server_url"] == "http://gpu:8118/v1"
+
+
+def test_api_key_from_the_environment_reaches_the_pipeline_kwargs(monkeypatch):
     # The paperless parser never passes the key as an option.
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_VL_API_KEY", "sekrit")
-    vl._build_pipeline(_opts(None))
-    assert _CapturingPipeline.last_kwargs.get("vl_rec_api_key") == "sekrit"
+    assert vl.pipeline_kwargs(_opts()).get("vl_rec_api_key") == "sekrit"
 
 
-def test_v1_disables_spotting_prompt():
-    pipeline = _CapturingPipeline(pipeline_version="v1")
-    assert vl._spotting_capable(pipeline) is False
-    assert vl._spotting_capable(_CapturingPipeline(pipeline_version="v1.6")) is True
-
-
-def test_missing_doc_parser_dependency_gets_install_hint(monkeypatch):
-    class DependencyError(Exception):
-        pass
-
-    class _Exploding:
-        def __init__(self, **kwargs: Any) -> None:
-            raise DependencyError("paddlex says no")
-
-    monkeypatch.setattr(vl, "PaddleOCRVL", _Exploding)
+def test_missing_doc_parser_dependency_gets_install_hint(tmp_path, monkeypatch):
+    _fail_with(
+        monkeypatch, worker.PaddleWorkerError("paddlex says no", error_type="DependencyError")
+    )
     with pytest.raises(RuntimeError, match=r"paperless-paddleocr\[vl\]"):
-        vl._build_pipeline(_opts(None))
+        vl.build_page(_png(tmp_path), _opts())
+
+
+def test_other_worker_errors_keep_their_type_and_message(tmp_path, monkeypatch):
+    _fail_with(monkeypatch, worker.PaddleWorkerError("Place(undefined:0)", error_type="TypeError"))
+    with pytest.raises(worker.PaddleWorkerError, match=r"Place\(undefined:0\)"):
+        vl.build_page(_png(tmp_path), _opts())

@@ -446,7 +446,8 @@ Pick `cu126` / `cu129` / `cu118` to match your host's CUDA driver - see
 
 ### `classic-gpu` engine fails with "no CUDA device is visible"
 
-`check_options` calls `paddle.device.cuda.device_count()` and bails out fast when it returns zero. Check:
+`check_options` has the paddle worker call `paddle.device.cuda.device_count()` and bails out fast when it returns zero.
+Check:
 
 1. The host has an NVIDIA driver installed (`nvidia-smi` runs on the host).
 2. `nvidia-container-toolkit` is installed and configured for Docker.

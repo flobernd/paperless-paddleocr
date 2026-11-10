@@ -16,7 +16,7 @@ from ocrmypdf.pluginspec import OcrEngine, OrientationConfidence
 
 from paperless_paddleocr import DEFAULT_ENGINE
 from paperless_paddleocr.languages import PADDLE_NATIVE, TESSERACT_TO_PADDLE
-from paperless_paddleocr.paddle_engine import classic, pdf, vl
+from paperless_paddleocr.paddle_engine import classic, pdf, vl, worker
 from paperless_paddleocr.paddle_engine.hocr import Page, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
@@ -64,12 +64,11 @@ class PaddleOCREngine(OcrEngine):
 
     @staticmethod
     def version() -> str:
-        try:
-            import paddleocr
-
-            return paddleocr.__version__
-        except (ImportError, AttributeError):
-            return "unknown"
+        # ocrmypdf can ask for the version at a point the plugin does not
+        # control, so it comes from the ping of check_options and never from a
+        # worker started here.
+        ping = worker.cached_ping()
+        return "unknown" if ping is None else str(ping["paddleocr"])
 
     @staticmethod
     def creator_tag(options: Any) -> str:

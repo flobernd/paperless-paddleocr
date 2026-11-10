@@ -17,9 +17,9 @@ def _page() -> Page:
 def test_ocr_page_line_boxes_are_never_degenerate():
     page = _page()
     block = {
-        "block_label": "text",
-        "block_content": "one\ntwo\nthree",
-        "block_bbox": [0, 10, 100, 12],  # 2 px tall, 3 text lines
+        "label": "text",
+        "content": "one\ntwo\nthree",
+        "bbox": [0, 10, 100, 12],  # 2 px tall, 3 text lines
     }
     _ocr_page([block], page)
     lines = [line for blk in page.blocks for line in blk.lines]
@@ -31,9 +31,9 @@ def test_ocr_page_line_boxes_are_never_degenerate():
 def test_ocr_page_line_boxes_partition_the_block_height():
     page = _page()
     block = {
-        "block_label": "text",
-        "block_content": "one\ntwo\nthree",
-        "block_bbox": [0, 0, 100, 30],
+        "label": "text",
+        "content": "one\ntwo\nthree",
+        "bbox": [0, 0, 100, 30],
     }
     _ocr_page([block], page)
     boxes = [line.box for blk in page.blocks for line in blk.lines]
