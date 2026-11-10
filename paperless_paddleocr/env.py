@@ -1,7 +1,7 @@
 """Readers for the ``PAPERLESS_PADDLEOCR_*`` environment variables.
 
-This module imports neither Django nor paddle, so code that runs under a
-hand-run ocrmypdf can use it as well as the parser.
+This module imports no Django, so code that runs under a hand-run ocrmypdf
+can use it as well as the parser.
 """
 
 from __future__ import annotations

@@ -57,8 +57,8 @@ def check_entry_point() -> None:
 
 
 def check_parser_imports() -> None:
-    # Importing this module exercises every `from documents...` /
-    # `from paperless...` import against the real paperless-ngx install.
+    # Importing the parser exercises each of its `from paperless...` imports
+    # against the real paperless-ngx install.
     import django
 
     django.setup()
