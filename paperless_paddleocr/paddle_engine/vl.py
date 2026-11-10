@@ -323,8 +323,8 @@ def build_page(input_file: Path, options: Any) -> Page:
         if "DependencyError" in e.error_chain:
             raise RuntimeError(
                 "PaddleOCR-VL dependencies are missing in the worker interpreter "
-                f"{worker.worker_interpreter()}. Install paddle-requirements-vl.txt there "
-                "(see README, Installation).",
+                f'{worker.worker_interpreter()}. Install "paddleocr[doc-parser]>=3.0,<4" there '
+                "(see README, Troubleshooting).",
             ) from e
         raise
     log.debug(
