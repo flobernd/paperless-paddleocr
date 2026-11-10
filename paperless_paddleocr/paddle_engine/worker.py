@@ -148,9 +148,10 @@ class _Worker:
     def __init__(self) -> None:
         interpreter = worker_interpreter()
         try:
-            # The worker exits at stdin EOF, which the kernel delivers as well
-            # when this process dies, so the parent needs no signal handler or
-            # exit hook to end it.
+            # The worker reads stdin between requests only. When this process
+            # dies, the kernel closes the pipe, so an idle worker exits at the
+            # EOF and a busy one once its request ends, and the parent needs
+            # no signal handler or exit hook to end it.
             self.process = subprocess.Popen(
                 [interpreter, "-P", str(WORKER_SCRIPT)],
                 stdin=subprocess.PIPE,

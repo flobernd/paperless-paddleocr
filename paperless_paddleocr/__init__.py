@@ -9,7 +9,7 @@ __version__ = "0.1.1"
 # One home for the option defaults the parser, the ocrmypdf plugin and the
 # engine all read. This module stays free of package imports on purpose:
 # paperless imports the parser at startup, where loading the plugin would
-# pull in paddle.
+# load ocrmypdf, which the upstream parser imports only when it parses.
 ENGINE_CHOICES: Final[tuple[str, ...]] = ("classic-cpu", "classic-gpu", "vl-remote")
 DEFAULT_ENGINE: Final[str] = "classic-cpu"
 STRATEGY_CHOICES: Final[tuple[str, ...]] = ("merge", "winner")
