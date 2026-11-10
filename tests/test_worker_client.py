@@ -73,14 +73,21 @@ def test_error_response_raises_with_the_chain(fake_worker_env, png):
     assert info.value.error_chain == ("RuntimeError", "DependencyError")
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        "{'type': 'RuntimeError', 'message': 'no chain here', 'traceback': ''}",
+        "{'message': 'no chain here'}",
+    ],
+)
 def test_error_response_without_a_chain_raises_the_worker_error(
-    fake_worker_env, monkeypatch, tmp_path
+    fake_worker_env, monkeypatch, tmp_path, error
 ):
     script = tmp_path / "chainless_worker.py"
     script.write_text(
         "import json, sys\n"
         "request = json.loads(sys.stdin.readline())\n"
-        "error = {'type': 'RuntimeError', 'message': 'no chain here', 'traceback': ''}\n"
+        f"error = {error}\n"
         "print(json.dumps({'id': request['id'], 'ok': False, 'error': error}), flush=True)\n"
         "sys.stdin.read()\n",
         encoding="utf-8",
@@ -88,6 +95,53 @@ def test_error_response_without_a_chain_raises_the_worker_error(
     monkeypatch.setattr(worker, "WORKER_SCRIPT", script)
     with pytest.raises(worker.PaddleWorkerError, match="no chain here"):
         worker.call({"op": "ping"})
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        "{'result': {}}",
+        "{'ok': True, 'result': None}",
+        "{'ok': False, 'error': 'boom'}",
+        "{'ok': False, 'error': {'type': 'RuntimeError', 'traceback': ''}}",
+    ],
+)
+def test_response_off_protocol_fails_the_call_with_the_op(
+    fake_worker_env, monkeypatch, tmp_path, envelope
+):
+    script = tmp_path / "off_protocol_worker.py"
+    script.write_text(
+        "import json, sys\n"
+        "request = json.loads(sys.stdin.readline())\n"
+        f"print(json.dumps({{'id': request['id'], **{envelope}}}), flush=True)\n"
+        "sys.stdin.read()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "WORKER_SCRIPT", script)
+    with pytest.raises(worker.PaddleWorkerError, match="ping request"):
+        worker.call({"op": "ping"})
+
+
+def test_worker_that_answered_off_protocol_is_replaced(fake_worker_env, monkeypatch, tmp_path):
+    # Only the first worker answers off protocol, so the second call answers
+    # only if it went to a fresh worker.
+    marker = tmp_path / "started"
+    script = tmp_path / "off_protocol_once_worker.py"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        f"marker = pathlib.Path({str(marker)!r})\n"
+        "first = not marker.exists()\n"
+        "marker.touch()\n"
+        "for line in sys.stdin:\n"
+        "    result = None if first else {'fresh': True}\n"
+        "    answer = {'id': json.loads(line)['id'], 'ok': True, 'result': result}\n"
+        "    print(json.dumps(answer), flush=True)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "WORKER_SCRIPT", script)
+    with pytest.raises(worker.PaddleWorkerError):
+        worker.call({"op": "ping"})
+    assert worker.call({"op": "ping"}) == {"fresh": True}
 
 
 def test_crash_raises_with_stderr_and_next_call_respawns(fake_worker_env, png, caplog):
