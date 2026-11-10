@@ -7,9 +7,13 @@ score lists, and dicts or objects for layout blocks.
 """
 
 import os
+import sys
+import time
 
 import numpy as np
 
+# Fails the paddleocr import. FAKE_PADDLEPADDLE_FAIL_IMPORT fails the paddle
+# import.
 if os.environ.get("FAKE_PADDLE_FAIL_IMPORT") == "1":
     raise ImportError("No module named 'paddleocr'")
 
@@ -35,11 +39,24 @@ class PaddleOCR:
         _record_construction("PaddleOCR")
         if kwargs.get("unprintable_error"):
             raise UnprintableError()
+        if kwargs.get("explode"):
+            # A worker that dies in the middle of a request, as on an OOM in
+            # PaddlePaddle, after a last line on stderr.
+            print("exploded", file=sys.stderr)
+            raise SystemExit(1)
         self.kwargs = kwargs
 
     def predict(self, image, return_word_box=False):
         if self.kwargs.get("unexpected_result"):
             return ["not a page result"]
+        if self.kwargs.get("hang"):
+            # Far past the one-second timeout of the hang test, which ends the
+            # sleep with a kill.
+            time.sleep(30)
+        if self.kwargs.get("flood_stderr"):
+            # More than a pipe buffer holds, so a parent that does not read
+            # stderr while it waits for the response stalls the worker.
+            sys.stderr.write(("x" * 1023 + "\n") * 1024)
         if self.kwargs.get("noisy"):
             # One write from Python and one from native code, and neither may
             # reach the worker's protocol lines.
