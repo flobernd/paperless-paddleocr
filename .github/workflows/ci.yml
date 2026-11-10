@@ -129,7 +129,8 @@ jobs:
 
       # The package runs paddle in a worker venv and declares no paddle
       # dependency, so the job installs it with the dependencies of
-      # pyproject.toml, and a runtime dependency missing there fails the tests.
+      # pyproject.toml. An import that neither pyproject.toml nor one of its
+      # dependencies provides then fails the tests.
       - name: Install runtime + test deps
         run: |
           python -m pip install --upgrade pip
