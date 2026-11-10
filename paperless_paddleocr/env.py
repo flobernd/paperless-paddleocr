@@ -14,8 +14,12 @@ from paperless_paddleocr import DEFAULT_ENGINE, ENGINE_CHOICES
 log = logging.getLogger("paperless.paddleocr.env")
 
 
+def env_str(name: str, default: str = "") -> str:
+    return os.environ.get(name, "").strip() or default
+
+
 def env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, "").strip()
+    raw = env_str(name)
     if not raw:
         return default
     try:
@@ -31,7 +35,7 @@ def env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
     The value is stripped and lower-cased before the comparison, so a
     mixed-case entry in ``choices`` never matches.
     """
-    raw = os.environ.get(name, "").strip()
+    raw = env_str(name)
     if not raw:
         return default
     value = raw.lower()
