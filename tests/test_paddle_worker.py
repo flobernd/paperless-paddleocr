@@ -277,12 +277,14 @@ def test_vl_pipeline_without_the_version_parameter_runs_in_ocr_mode(spawn_worker
     assert response["result"]["spotting_capable"] is False
 
 
-def _raw_vl(request_id: int, png: Path, raw_results: list[Any]) -> dict[str, Any]:
+def _raw_vl(
+    request_id: int, png: Path, raw_results: list[Any], **fake_kwargs: Any
+) -> dict[str, Any]:
     return {
         "id": request_id,
         "op": "vl",
         "image": str(png),
-        "kwargs": {"device": "cpu", "raw_results": raw_results},
+        "kwargs": {"device": "cpu", "raw_results": raw_results, **fake_kwargs},
         "pipeline_version": "v1",
     }
 
@@ -315,6 +317,56 @@ def test_vl_spotting_fields_of_unequal_length_are_an_error(worker, png):
     message = _call(worker, _raw_vl(30, png, [page]))["error"]["message"]
     assert "rec_polys" in message
     assert "paddleocr 3.4.0" in message
+
+
+@pytest.mark.parametrize(
+    ("spotting", "block"),
+    [
+        pytest.param({}, "Hi", id="v1-block-without-members"),
+        pytest.param(
+            {"rec_texts": []},
+            {"label": "ocr", "content": "Hi", "bbox": [0, 0, 40, 20]},
+            id="spotting-without-rec_polys",
+        ),
+        pytest.param(
+            {"rec_polys": [], "rec_texts": None},
+            {"label": "ocr", "content": "Hi", "bbox": [0, 0, 40, 20]},
+            id="spotting-with-rec_texts-none",
+        ),
+    ],
+)
+def test_vl_block_of_an_unknown_shape_is_an_error_without_a_complete_spotting_result(
+    worker, png, spotting, block
+):
+    page = {"spotting_res": spotting, "parsing_res_list": [block]}
+    message = _call(worker, _raw_vl(31, png, [page]))["error"]["message"]
+    assert "layout block" in message
+    assert "paddleocr 3.4.0" in message
+
+
+def test_vl_block_of_an_unknown_shape_passes_beside_a_complete_blank_spotting_result(worker, png):
+    block = {"label": "spotting", "content": "", "bbox": [0, 0, 40, 20]}
+    page = {"spotting_res": {"rec_polys": [], "rec_texts": []}, "parsing_res_list": [block]}
+    response = _call(worker, _raw_vl(32, png, [page]))
+    assert response["ok"] is True, response["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("block", "block_objects"),
+    [
+        pytest.param(
+            {"block_label": "ocr", "block_content": "", "block_bbox": [0, 0, 40, 20]},
+            False,
+            id="dict",
+        ),
+        pytest.param({"label": "ocr", "content": "", "bbox": [0, 0, 40, 20]}, True, id="object"),
+    ],
+)
+def test_vl_block_without_content_on_a_blank_v1_page_is_a_result(worker, png, block, block_objects):
+    page = {"spotting_res": {}, "parsing_res_list": [block]}
+    response = _call(worker, _raw_vl(33, png, [page], block_objects=block_objects))
+    assert response["ok"] is True, response["error"]["message"]
+    assert response["result"]["blocks"] == [{"label": "ocr", "content": "", "bbox": [0, 0, 40, 20]}]
 
 
 def test_vl_reuses_one_pipeline_per_configuration(worker, png, construction_log):

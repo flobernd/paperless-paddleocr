@@ -141,6 +141,13 @@ class PaddleOCRVL:
         _require_device()
         self.pipeline_version = pipeline_version
         self.raw_results = kwargs.get("raw_results")
+        # The request is JSON, so a test that wants the block objects of
+        # current paddlex passes the attributes of each block as a dict.
+        if kwargs.get("block_objects"):
+            self.raw_results = [
+                {**page, "parsing_res_list": [_VLBlock(**b) for b in page["parsing_res_list"]]}
+                for page in self.raw_results
+            ]
 
     def predict(self, image, use_layout_detection=None, use_queues=None, prompt_label=None):
         # The vl adapter runs no local layout model and no prediction queues,
