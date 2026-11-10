@@ -17,7 +17,6 @@ server returns. Two response shapes are handled:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,7 @@ from typing import Any
 from PIL import Image
 
 from paperless_paddleocr import DEFAULT_VL_MODEL_NAME, DEFAULT_VL_PIPELINE_VERSION
+from paperless_paddleocr.env import env_str
 from paperless_paddleocr.languages import first_paddle_lang
 from paperless_paddleocr.paddle_engine import worker
 from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
@@ -38,6 +38,10 @@ from paperless_paddleocr.paddle_engine.layout import (
 log = logging.getLogger("paperless.paddleocr.vl")
 
 OCR_SYSTEM = "PaddleOCR-VL via paperless-paddleocr"
+
+#: The requirement the VL install hints name. paddle-requirements-vl.txt and
+#: the README cannot import it and repeat it by hand.
+VL_REQUIREMENT = "paddleocr[doc-parser]>=3.0,<4"
 
 #: VL recognition returns no per-word confidence; the invisible layer still
 #: needs an ``x_wconf``, so a fixed high value is used.
@@ -93,10 +97,7 @@ def resolve_vl_api_key(options: Any) -> str:
     inherited parse method logs the ocrmypdf arguments at debug level. The
     option serves a hand-run ocrmypdf.
     """
-    return (
-        _vl_option(options, "paddle_vl_api_key")
-        or os.environ.get("PAPERLESS_PADDLEOCR_VL_API_KEY", "").strip()
-    )
+    return _vl_option(options, "paddle_vl_api_key") or env_str("PAPERLESS_PADDLEOCR_VL_API_KEY")
 
 
 def normalize_server_url(raw: str) -> str:
@@ -323,7 +324,7 @@ def build_page(input_file: Path, options: Any) -> Page:
         if "DependencyError" in e.error_chain:
             raise RuntimeError(
                 "PaddleOCR-VL dependencies are missing in the worker interpreter "
-                f'{worker.worker_interpreter()}. Install "paddleocr[doc-parser]>=3.0,<4" there '
+                f'{worker.worker_interpreter()}. Install "{VL_REQUIREMENT}" there '
                 "(see README, Troubleshooting).",
             ) from e
         raise

@@ -36,7 +36,7 @@ from paperless_paddleocr import (
     STRATEGY_CHOICES,
     __version__,
 )
-from paperless_paddleocr.env import engine_from_env, env_choice, env_int
+from paperless_paddleocr.env import engine_from_env, env_choice, env_int, env_str
 from paperless_paddleocr.languages import resolve_paddle_languages
 
 logger = logging.getLogger("paperless.parsing.paddleocr")
@@ -129,15 +129,16 @@ class PaperlessPaddleParser(RasterisedDocumentParser):
             STRATEGY_CHOICES,
             DEFAULT_STRATEGY,
         )
-        self._vl_server_url: str = os.environ.get("PAPERLESS_PADDLEOCR_VL_SERVER_URL", "").strip()
-        self._vl_model_name: str = (
-            os.environ.get("PAPERLESS_PADDLEOCR_VL_MODEL_NAME", "").strip() or DEFAULT_VL_MODEL_NAME
+        self._vl_server_url: str = env_str("PAPERLESS_PADDLEOCR_VL_SERVER_URL")
+        self._vl_model_name: str = env_str(
+            "PAPERLESS_PADDLEOCR_VL_MODEL_NAME",
+            DEFAULT_VL_MODEL_NAME,
         )
-        self._vl_pipeline_version: str = (
-            os.environ.get("PAPERLESS_PADDLEOCR_VL_PIPELINE_VERSION", "").strip()
-            or DEFAULT_VL_PIPELINE_VERSION
+        self._vl_pipeline_version: str = env_str(
+            "PAPERLESS_PADDLEOCR_VL_PIPELINE_VERSION",
+            DEFAULT_VL_PIPELINE_VERSION,
         )
-        self._lang_override: str | None = os.environ.get("PAPERLESS_PADDLEOCR_LANGUAGE") or None
+        self._lang_override: str | None = os.environ.get("PAPERLESS_PADDLEOCR_LANGUAGE")
 
     def construct_ocrmypdf_parameters(
         self,

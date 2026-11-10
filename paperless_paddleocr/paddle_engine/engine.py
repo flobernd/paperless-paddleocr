@@ -40,7 +40,7 @@ def _variant(options: Any) -> str:
     return getattr(options, "paddle_engine", DEFAULT_ENGINE)
 
 
-def _order_page(page: Page) -> str:
+def order_page(page: Page) -> str:
     """Reorder page.blocks in banded reading order; return the sidecar text.
 
     Line.text stays authoritative for the sidecar because engines may space
@@ -114,7 +114,7 @@ class PaddleOCREngine(OcrEngine):
         options: Any,
     ) -> None:
         page = PaddleOCREngine.build_page(input_file, options)
-        write_document(page, output_hocr, output_text, sidecar=_order_page(page))
+        write_document(page, output_hocr, output_text, sidecar=order_page(page))
 
     @classmethod
     def generate_pdf(

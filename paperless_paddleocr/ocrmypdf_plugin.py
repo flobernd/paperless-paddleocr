@@ -47,6 +47,7 @@ from paperless_paddleocr import (
     STRATEGY_CHOICES,
 )
 from paperless_paddleocr.paddle_engine import PaddleOCREngine, worker
+from paperless_paddleocr.paddle_engine.engine import order_page
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
 from paperless_paddleocr.paddle_engine.hocr import (
     Block,
@@ -58,7 +59,11 @@ from paperless_paddleocr.paddle_engine.hocr import (
     write_document,
 )
 from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
-from paperless_paddleocr.paddle_engine.vl import normalize_server_url, resolve_vl_api_key
+from paperless_paddleocr.paddle_engine.vl import (
+    VL_REQUIREMENT,
+    normalize_server_url,
+    resolve_vl_api_key,
+)
 
 log = logging.getLogger("paperless.paddleocr.plugin")
 
@@ -185,24 +190,23 @@ class MultiLangPaddleEngine(PaddleOCREngine):
             strategy,
         )
 
-        pages: dict[str, Page] = {}
+        per_lang_words: dict[str, list[Word]] = {}
         for lang in langs:
             sub_options = copy.copy(options)
             sub_options.languages = [lang]
             try:
-                pages[lang] = PaddleOCREngine.build_page(input_file, sub_options)
+                page = PaddleOCREngine.build_page(input_file, sub_options)
             except Exception as e:
                 raise RuntimeError(
                     f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
                 ) from e
+            per_lang_words[lang] = page_words(page)
 
-        per_lang_words = {lang: page_words(page) for lang, page in pages.items()}
-        merged, primary = _select(strategy, per_lang_words, langs)
+        merged, primary = _select(strategy, per_lang_words)
         blocks = reading_blocks(merged, bbox_of=lambda w: w.box)
         # The adapters size each page from the input image, so any pass gives the page size.
-        first = pages[langs[0]]
         write_document(
-            _merged_page(blocks, first.width, first.height, hocr_lang=primary),
+            _merged_page(blocks, page.width, page.height, hocr_lang=primary),
             output_hocr,
             output_text,
             sidecar=_blocks_to_text(blocks),
@@ -212,14 +216,14 @@ class MultiLangPaddleEngine(PaddleOCREngine):
 def page_words(page: Page) -> list[Word]:
     """Every word of ``page`` that has text, in the block order of the single-language hOCR.
 
-    The merge sorts stably, so the word order decides its ties. Boxes are
-    clamped to the page and texts cleaned and stripped here, ahead of the
-    merge, because the merged lines derive their boxes, baselines and word
-    spacing from these words.
+    ``page.blocks`` is left in that order. The merge sorts stably, so the
+    word order decides its ties. Boxes are clamped to the page and texts
+    cleaned and stripped here, ahead of the merge, because the merged lines
+    derive their boxes, baselines and word spacing from these words.
     """
-    grouped = reading_blocks(page.blocks, bbox_of=lambda b: b.box)
+    order_page(page)
     words: list[Word] = []
-    for block in (blk for group in grouped for row in group for blk in row):
+    for block in page.blocks:
         for line in block.lines:
             for word in line.words:
                 text = clean_text(word.text).strip()
@@ -232,7 +236,6 @@ def page_words(page: Page) -> list[Word]:
 def _select(
     strategy: str,
     per_lang_words: dict[str, list[Word]],
-    langs: list[str],
 ) -> tuple[list[Word], str]:
     """Words to emit, and the language the merged hOCR is labelled with."""
     if strategy == "winner":
@@ -258,7 +261,7 @@ def _select(
         len(per_lang_words),
         len(merged),
     )
-    return merged, langs[0]
+    return merged, next(iter(per_lang_words))
 
 
 # ----------------------------------------------------------------------
@@ -465,24 +468,22 @@ def add_options(parser: Any) -> None:
     )
 
 
+def _checked_choice(options: Any, name: str, choices: tuple[str, ...], default: str) -> str:
+    # argparse validates `choices=` on CLI usage, but the Python API
+    # (ocrmypdf.ocr(paddle_engine=…)) skips that check. An unknown value fails
+    # here, where it would otherwise fall through to another variant
+    # (classic-cpu for the engine).
+    value = getattr(options, name, default)
+    if value not in choices:
+        raise ValueError(f"Unknown {name}={value!r}. Valid choices: {list(choices)}.")
+    return value
+
+
 @ocrmypdf.hookimpl
 def check_options(options: Any) -> None:
     """Validate the PaddleOCR options and that the worker interpreter can run the engine variant."""
-    engine = getattr(options, "paddle_engine", DEFAULT_ENGINE)
-    if engine not in ENGINE_CHOICES:
-        # argparse validates --paddle-engine via `choices=` on CLI usage, but
-        # the Python API (ocrmypdf.ocr(paddle_engine=…)) skips that check.
-        # Validate explicitly so an unknown engine fails fast rather than
-        # silently falling through to classic-cpu.
-        raise ValueError(
-            f"Unknown paddle_engine={engine!r}. Valid choices: {list(ENGINE_CHOICES)}.",
-        )
-    strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
-    if strategy not in STRATEGY_CHOICES:
-        raise ValueError(
-            f"Unknown paddle_multi_lang_strategy={strategy!r}. "
-            f"Valid choices: {list(STRATEGY_CHOICES)}.",
-        )
+    engine = _checked_choice(options, "paddle_engine", ENGINE_CHOICES, DEFAULT_ENGINE)
+    _checked_choice(options, "paddle_multi_lang_strategy", STRATEGY_CHOICES, DEFAULT_STRATEGY)
 
     # The ping runs here and never at import: a process that forks after its
     # worker started leaves the child a worker the child cannot reap, and the
@@ -511,7 +512,7 @@ def check_options(options: Any) -> None:
             raise MissingDependencyError(
                 "PaddleOCR-VL is not available: the paddleocr in the worker interpreter "
                 f"{worker.worker_interpreter()} has no PaddleOCRVL. Upgrade it there with "
-                '"paddleocr[doc-parser]>=3.0,<4" (see README, Troubleshooting).',
+                f'"{VL_REQUIREMENT}" (see README, Troubleshooting).',
             )
         server_url = (getattr(options, "paddle_vl_server_url", "") or "").strip()
         if not server_url:
