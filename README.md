@@ -201,12 +201,12 @@ below take the place of step 3. Writing to `/opt` needs root, so run them in one
 because a `sudo` in front of each command would not pass the exported `UV_PYTHON_INSTALL_DIR` on to uv.
 
 ```bash
-# 1. Create the Python 3.13 worker venv.
+# 3a. Create the Python 3.13 worker venv.
 export UV_PYTHON_INSTALL_DIR=/opt/paperless-paddleocr/python
 uv python install 3.13
 uv venv --python 3.13 /opt/paperless-paddleocr/venv
 
-# 2. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
+# 3b. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
     -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
 # …or, for classic-gpu:
@@ -300,10 +300,10 @@ The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocr
 > included.
 
 > [!NOTE]
-> PaddleX refuses a second initialization in one process with "PDX has already been initialized". PaddlePaddle and
-> PaddleX initialize in the paddle worker and never in the paperless-ngx process. Each paperless worker process has one
-> paddle worker, which serves each request of that process, so an archive rebuild after other documents in the same
-> process reuses the initialized worker.
+> PaddleX raises "PDX has already been initialized" when it initializes a second time in one process. The paddle worker
+> that later documents reuse has PaddleX loaded already, and the plugin replaces a worker that exits, times out or sends
+> a line out of step with a fresh process, which loads PaddleX on its own. An archive rebuild after other documents of
+> the same paperless worker process therefore does not initialize PaddleX twice in one process.
 
 > [!NOTE]
 > Classic PaddleOCR (CPU or GPU) downloads ~50 MB of model weights on first use and caches them under `~/.paddlex/`
@@ -557,6 +557,9 @@ the message names the interpreter the plugin started:
   has no worker venv, so the plugin fell back to that interpreter, which has no PaddlePaddle. The Python 3.14 of the
   paperless-ngx 3.1 and later images cannot install it. Install the worker venv as [Installation](#installation)
   describes, or set [`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python).
+- "The paddle worker cannot run" with `/opt/paperless-paddleocr/venv/bin/python` and
+  `The paddle worker exited before it answered the ping request`: the worker process ended before it answered. The
+  `Exit status` and the `Last lines of its stderr` in the message show why.
 - "The paddle worker cannot run" with the value of `PAPERLESS_PADDLEOCR_PYTHON` and `Cannot start the paddle worker`:
   that path does not exist or cannot run. Correct the setting.
 
@@ -574,14 +577,19 @@ docker compose exec -u paperless paperless /opt/paperless-paddleocr/venv/bin/pyt
 ```
 
 `Permission denied` means that user cannot read the interpreter, for example one under `/root/.local/share/uv/python`
-that uv installed as root without `UV_PYTHON_INSTALL_DIR`. To install the packages of the engine into the worker venv by
-hand, as [Installation](#installation) and the bootstrap scripts do, with `--upgrade` on the requirement files to
-replace older releases:
+that uv installed as root without `UV_PYTHON_INSTALL_DIR`.
+
+To install the packages of the engine into the worker venv by hand, as [Installation](#installation) and the bootstrap
+scripts do, with `--upgrade` on the requirement files to replace older releases, run the commands below. A container
+built from a recipe holds none of the requirement files, so take them from a checkout of this repository, from the
+`paperless-paddleocr/` subdirectory of the bootstrap layout, or in the raw URL form of [C. Non-Docker host
+install](#c-non-docker-host-install):
 
 ```bash
 # classic-cpu
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r paddle-requirements.txt
-# classic-gpu: the GPU wheel from the Paddle index, then paddleocr from PyPI
+# classic-gpu: the GPU wheel from the Paddle index, without --upgrade, so an installed 3.x GPU wheel stays as it is,
+# then paddleocr from PyPI
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
     --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r paddle-requirements-gpu.txt
