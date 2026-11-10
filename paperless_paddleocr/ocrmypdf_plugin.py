@@ -27,6 +27,7 @@ calls from paperless's built-in Tesseract parser are unaffected.
 from __future__ import annotations
 
 import copy
+import http.client
 import logging
 from pathlib import Path
 from typing import Any
@@ -77,10 +78,11 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
     if cache_key in _PROBED_SERVERS:
         return
 
-    request = Request(f"{base}/models")  # noqa: S310 - operator-configured URL
-    if api_key:
-        request.add_header("Authorization", f"Bearer {api_key}")
     try:
+        # A URL without a scheme makes Request raise ValueError.
+        request = Request(f"{base}/models")  # noqa: S310 - operator-configured URL
+        if api_key:
+            request.add_header("Authorization", f"Bearer {api_key}")
         # A vLLM server under load answers /models slowly. Only a successful
         # probe is cached per worker process, so a host that never answers
         # delays each document by this timeout.
@@ -98,7 +100,9 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
             e.code,
             base,
         )
-    except OSError as e:
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        # urllib lets http.client errors such as BadStatusLine through
+        # unwrapped, and they are no OSError.
         raise MissingDependencyError(
             f"The PaddleOCR-VL server at {base} is not reachable ({getattr(e, 'reason', e)}). "
             "Check PAPERLESS_PADDLEOCR_VL_SERVER_URL and that the "

@@ -6,6 +6,7 @@ urlopen is stubbed at the plugin module level; no network is touched.
 from __future__ import annotations
 
 import contextlib
+import http.client
 import io
 import sys
 import types
@@ -71,6 +72,21 @@ def test_socket_error_without_reason_raises_actionable_error(monkeypatch):
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", fail)
     with pytest.raises(MissingDependencyError, match="not reachable"):
         ocrmypdf_plugin._probe_vl_server("http://gpu:8118", "")
+
+
+def test_url_without_scheme_raises_actionable_error():
+    with pytest.raises(MissingDependencyError, match="not reachable"):
+        ocrmypdf_plugin._probe_vl_server("gpuhost", "")
+
+
+def test_non_http_answer_raises_actionable_error(monkeypatch):
+    # urllib lets http.client's BadStatusLine through unwrapped, and it is no OSError.
+    def ssh_banner(request, timeout):
+        raise http.client.BadStatusLine("SSH-2.0-OpenSSH_9.6\r\n")
+
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", ssh_banner)
+    with pytest.raises(MissingDependencyError, match="not reachable"):
+        ocrmypdf_plugin._probe_vl_server("http://gpu:22", "")
 
 
 def test_auth_failure_raises_actionable_error(monkeypatch):
