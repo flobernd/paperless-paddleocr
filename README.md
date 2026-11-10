@@ -290,6 +290,12 @@ The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocr
 > included.
 
 > [!NOTE]
+> PaddleX refuses a second initialization in one process with "PDX has already been initialized". PaddlePaddle and
+> PaddleX initialize in the paddle worker and never in the paperless-ngx process. Each paperless worker process has one
+> paddle worker, which serves each request of that process, so an archive rebuild after other documents in the same
+> process reuses the initialized worker.
+
+> [!NOTE]
 > Classic PaddleOCR (CPU or GPU) downloads ~50 MB of model weights on first use and caches them under `~/.paddlex/` inside the
 > container. Mount a persistent volume at `/usr/src/paperless/.paddlex` to avoid re-downloads across rebuilds - the bundled
 > compose examples already do this. The `paperless` user downloads the models, so the recipes create that directory owned
