@@ -505,8 +505,9 @@ def check_options(options: Any) -> None:
     if engine == "vl-remote":
         if not ping["paddleocr_vl"]:
             raise MissingDependencyError(
-                "PaddleOCR-VL is not available. Install it with: "
-                "pip install 'paddleocr[doc-parser]'",
+                "PaddleOCR-VL is not available: the paddleocr in the worker interpreter "
+                f"{worker.worker_interpreter()} has no PaddleOCRVL. Upgrade it there from "
+                "paddle-requirements-vl.txt (see README, Installation).",
             )
         server_url = (getattr(options, "paddle_vl_server_url", "") or "").strip()
         if not server_url:

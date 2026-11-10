@@ -1,0 +1,3 @@
+# paddlepaddle-gpu is installed in a step of its own from the Paddle index,
+# which carries no paddleocr release.
+paddleocr>=3.0,<4

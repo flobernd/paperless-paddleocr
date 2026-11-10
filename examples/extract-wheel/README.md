@@ -10,8 +10,12 @@ build the plugin into a custom paperless-ngx image via the recipes in
 * **Wheel-file extraction** - air-gapped hosts, private mirrors, or any
   pipeline that wants a `.whl` file rather than a `pip install git+…` call.
 
-The plugin wheel is **CUDA-agnostic** - install one paddle wheel alongside
-it: `paddlepaddle` for CPU or `paddlepaddle-gpu` for GPU.
+The plugin wheel is **CUDA-agnostic** and does not pull in PaddlePaddle or
+PaddleOCR. Install them from the requirement file of the engine, with
+`paddlepaddle` for CPU or `paddlepaddle-gpu` for GPU. The commands below put
+them into the venv of the plugin, which works with Python 3.12 or 3.13. With
+Python 3.14, they go into a Python 3.13 venv of their own, as the top-level
+[README](../../README.md#c-non-docker-host-install) describes.
 
 ## Native libraries
 
@@ -35,10 +39,11 @@ match the Paddle wheel you choose (see "GPU notes" below).
 the plugin directly from a Git ref.
 
 ```bash
-# 1. Install the paddle wheel you want.
-pip install "paddlepaddle>=3.0"
+# 1. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
 # …or, for GPU:
-pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu
+pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements-gpu.txt
 
 # 2. Install the plugin.
 pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
@@ -72,13 +77,14 @@ docker create --name paddleocr-extract paddleocr-plugin-builder
 docker cp paddleocr-extract:/dist/. ./dist/
 docker rm paddleocr-extract
 
-# 3. Install on the target host.
-pip install "paddlepaddle>=3.0"
+# 3. Install on the target host, with paddle-requirements.txt copied from
+#    the same ref of the repository.
+pip install -r paddle-requirements.txt
 pip install ./dist/paperless_paddleocr-*.whl
 ```
 
-For GPU, swap step 3's `paddlepaddle` install for the matching
-`paddlepaddle-gpu` invocation.
+For GPU, swap step 3's requirement install for the two GPU commands of
+Flavour 1, with `paddle-requirements-gpu.txt`.
 
 ## After install
 

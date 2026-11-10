@@ -62,11 +62,14 @@ def test_api_key_from_the_environment_reaches_the_pipeline_kwargs(monkeypatch):
     assert vl.pipeline_kwargs(_opts()).get("vl_rec_api_key") == "sekrit"
 
 
-def test_missing_doc_parser_dependency_gets_install_hint(tmp_path, monkeypatch):
+def test_missing_doc_parser_dependency_names_the_worker_interpreter(tmp_path, monkeypatch):
+    # The doc-parser packages belong in the worker interpreter, not in the one
+    # that runs paperless.
+    monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
     _fail_with(
         monkeypatch, worker.PaddleWorkerError("paddlex says no", error_type="DependencyError")
     )
-    with pytest.raises(RuntimeError, match=r"paperless-paddleocr\[vl\]"):
+    with pytest.raises(RuntimeError, match="/srv/paddle-venv/bin/python"):
         vl.build_page(_png(tmp_path), _opts())
 
 

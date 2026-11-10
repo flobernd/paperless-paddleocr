@@ -118,7 +118,8 @@ def test_other_http_errors_do_not_block(monkeypatch):
 
 
 def test_worker_without_paddleocr_vl_is_a_missing_dependency(monkeypatch):
+    monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _ok_urlopen([]))
     monkeypatch.setattr(worker, "call", lambda request: _ping(paddleocr_vl=False))
-    with pytest.raises(MissingDependencyError, match="PaddleOCR-VL is not available"):
+    with pytest.raises(MissingDependencyError, match="/srv/paddle-venv/bin/python"):
         ocrmypdf_plugin.check_options(_opts())

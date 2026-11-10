@@ -47,6 +47,18 @@ keeps working, and archive PDFs remain PDF/A.
 Build the plugin into a custom paperless-ngx image - the recipe Dockerfiles under [`examples/`](examples/)
 fetch the plugin source from this repository at build time and bake the wheel into the paperless-ngx base image.
 
+An install has two parts. The plugin goes into the interpreter that runs paperless-ngx. PaddlePaddle and PaddleOCR go
+into the worker venv, a Python 3.13 venv at `/opt/paperless-paddleocr/venv`, because the paperless-ngx 3.1 and later
+images run Python 3.14, which PaddlePaddle does not support. The plugin runs them in a worker process under the venv's
+interpreter (see [`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python)). The recipes and the bootstrap scripts
+create the venv with [uv](https://docs.astral.sh/uv/) and install it from the requirement file of the engine:
+
+| File | Engine | Packages |
+| --- | --- | --- |
+| [`paddle-requirements.txt`](paddle-requirements.txt) | `classic-cpu` | `paddlepaddle`, `paddleocr` |
+| [`paddle-requirements-gpu.txt`](paddle-requirements-gpu.txt) | `classic-gpu` | `paddleocr`, after `paddlepaddle-gpu` from the Paddle index in a step of its own |
+| [`paddle-requirements-vl.txt`](paddle-requirements-vl.txt) | `vl-remote` | `paddlepaddle`, `paddleocr[doc-parser]` |
+
 Pick the method that matches your environment:
 
 | Method | When to use |
@@ -58,7 +70,7 @@ Pick the method that matches your environment:
 ### A. Custom Docker image (recommended)
 
 Each engine has a matching recipe Dockerfile that pulls plugin source from a chosen Git ref, builds the wheel, and layers it
-plus the right paddle wheel onto `ghcr.io/paperless-ngx/paperless-ngx:latest`. Build args:
+plus the worker venv of the engine onto `ghcr.io/paperless-ngx/paperless-ngx:latest`. Build args:
 
 - `PLUGIN_REF` - Git ref to build from. Use a release tag (`v0.1.1`) for reproducible builds; `master` tracks the latest snapshot.
 - `PAPERLESS_TAG` - paperless-ngx base image tag (default `latest`). Set a version tag (`3.0`) for reproducible builds.
@@ -74,6 +86,13 @@ docker build \
 
 Drop-in replacement for `ghcr.io/paperless-ngx/paperless-ngx:latest`. Compose example:
 [`examples/docker-compose.classic-cpu.yml`](examples/docker-compose.classic-cpu.yml).
+
+[`docker/local.Dockerfile`](docker/local.Dockerfile) builds the same image from a local checkout, with the same
+`PAPERLESS_TAG` build arg:
+
+```bash
+docker build -f docker/local.Dockerfile -t paperless-paddleocr:local .
+```
 
 #### `classic-gpu`
 
@@ -94,6 +113,9 @@ docker build \
     -t paperless-paddleocr:classic-gpu .
 ```
 
+The recipe installs `paddlepaddle-gpu` from the Paddle index and then `paddle-requirements-gpu.txt` from PyPI, because
+the Paddle index carries no `paddleocr` release.
+
 The image bundles the matching CUDA-12 user-space libs (`libcudnn9-cuda-12`, `libnccl2`). `libcuda.so` itself comes from the
 host driver at runtime via `nvidia-container-toolkit` - the container needs `deploy.resources.reservations.devices` (compose)
 or `--gpus all` (`docker run`). Compose example:
@@ -105,7 +127,8 @@ If you really need CUDA 11.8 (older drivers), edit the Dockerfile to swap the cu
 
 #### `vl-remote`
 
-CPU paddle wheel locally, plus a separate `paddleocr-genai-vllm-server` container that owns the GPU and serves the VLM.
+CPU paddle wheel and the `doc-parser` extra of PaddleOCR in the worker venv, plus a separate `paddleocr-genai-vllm-server`
+container that owns the GPU and serves the VLM.
 The plugin sends each page image to that server and places the words it returns. No layout model runs on the paperless
 side.
 
@@ -124,34 +147,67 @@ Full compose stack with the sidecar GPU server:
 
 For paperless deployments where mounting into `/custom-cont-init.d/` is easier than rebuilding the image:
 
-- [`setup.sh`](setup.sh) - installs CPU paddlepaddle + the plugin tarball.
-- [`setup-gpu.sh`](setup-gpu.sh) - installs paddlepaddle-gpu (configurable via `PADDLE_CUDA_WHEEL`) + the plugin tarball.
+- [`setup.sh`](setup.sh) - installs CPU paddlepaddle and paddleocr from `paddle-requirements.txt` into the worker venv,
+  and the plugin tarball into the paperless interpreter.
+- [`setup-gpu.sh`](setup-gpu.sh) - installs paddlepaddle-gpu (configurable via `PADDLE_CUDA_WHEEL`) and paddleocr from
+  `paddle-requirements-gpu.txt` into the worker venv, and the plugin tarball into the paperless interpreter.
 
-Both scripts require a `paperless-paddleocr.tar.gz` (or `paperless_paddleocr-*.whl`) next to them - see
-[`examples/extract-wheel/README.md`](examples/extract-wheel/README.md). For GPU, the base image must already provide
-the CUDA / cuDNN runtime; otherwise prefer Method A with `Dockerfile.classic-gpu`.
+The script goes at the top of `/custom-cont-init.d/`. Its requirement file and a `paperless-paddleocr.tar.gz` (or
+`paperless_paddleocr-*.whl`, see [`examples/extract-wheel/README.md`](examples/extract-wheel/README.md)) go into the
+subdirectory `paperless-paddleocr/`, because the paperless-ngx image runs every file at the top of that folder with bash
+at each start and skips directories:
+
+```text
+custom-cont-init.d/
+├── setup.sh                       (or setup-gpu.sh)
+└── paperless-paddleocr/
+    ├── paddle-requirements.txt    (or paddle-requirements-gpu.txt)
+    └── paperless_paddleocr-0.1.1-py3-none-any.whl
+```
+
+Mount the folder in the compose file of paperless-ngx, for example `- ./custom-cont-init.d:/custom-cont-init.d:ro`. The
+image runs nothing from it unless the folder and its files belong to root and others cannot write them.
+
+The scripts create the worker venv with the uv of the paperless-ngx image and install uv with pip when the image has
+none. They also hand a model cache volume at `/usr/src/paperless/.paddlex` to the `paperless` user, because a new named
+volume belongs to root. Each step is skipped when its result exists, so only the first container start downloads the
+packages. For GPU, the base image must already provide the CUDA / cuDNN runtime. Otherwise prefer Method A with
+`Dockerfile.classic-gpu`.
 
 ### C. Non-Docker host install
+
+The plugin goes into the venv that runs paperless-ngx. With Python 3.12 or 3.13 there, PaddlePaddle and PaddleOCR can
+go into the same venv: when neither `PAPERLESS_PADDLEOCR_PYTHON` nor `/opt/paperless-paddleocr/venv` exists, the plugin
+runs the worker under the interpreter that runs paperless-ngx.
 
 ```bash
 # 1. Install native libs (Debian/Ubuntu shown; see extract-wheel/README.md for other distros).
 sudo apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1
 
-# 2. Install one paddle wheel.
-pip install "paddlepaddle>=3.0"   # CPU
-# …or, for GPU:
-pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu
-
-# 3. Install the plugin from a Git ref.
+# 2. Install the plugin from a Git ref.
 pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
+
+# 3. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
+# …or, for classic-gpu:
+pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements-gpu.txt
 ```
 
-For the `vl-remote` engine install the `vl` extra instead:
+With Python 3.14, PaddlePaddle needs a Python 3.13 venv of its own, and `PAPERLESS_PADDLEOCR_PYTHON` in the environment
+of paperless-ngx names its interpreter. A venv at `/opt/paperless-paddleocr/venv` needs no setting. With uv:
 
 ```bash
-pip install "paperless-paddleocr[vl] @ git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
+export UV_PYTHON_INSTALL_DIR=/opt/paperless-paddleocr/python
+uv python install 3.13
+uv venv --python 3.13 /opt/paperless-paddleocr/venv
+uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
+    -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
 ```
+
+The user that runs paperless-ngx must be able to read the venv and the interpreter it links to. uv installs its
+Pythons under the home directory of the user who runs it unless `UV_PYTHON_INSTALL_DIR` names another place.
 
 Then restart paperless-ngx; the parser is discovered via its `paperless_ngx.parsers` entry point. Full recipe and
 wheel-extraction alternative: [`examples/extract-wheel/README.md`](examples/extract-wheel/README.md).
@@ -214,6 +270,10 @@ On first startup the container will:
 Re-build the custom image with a newer `PLUGIN_REF` and recreate the container. The `paddleocr-genai-vllm-server` sidecar
 (for `vl-remote`) is updated independently by pulling a newer image tag.
 
+The recipes install the worker venv in a layer of its own, which Docker reuses as long as the requirement file of the new
+ref is unchanged, so a rebuild keeps the PaddlePaddle and PaddleOCR versions of the earlier build. Build with
+`--no-cache` to resolve them again.
+
 The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocrmypdf 17 ignores either keyword if
 `PAPERLESS_OCR_USER_ARGS` still sets it.
 
@@ -221,13 +281,21 @@ The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocr
 
 > [!NOTE]
 > CUDA dependencies live in the runtime image, not the plugin wheel. The same plugin wheel works on both CPU and GPU images;
-> the recipe Dockerfile picks `paddlepaddle` or `paddlepaddle-gpu`.
+> the recipe Dockerfile picks `paddlepaddle` or `paddlepaddle-gpu` for the worker venv.
+
+> [!NOTE]
+> The plugin imports no paddle module in the paperless-ngx process. The first document of a paperless worker process
+> starts a paddle worker process under the worker venv's interpreter, and later documents of that process reuse it with
+> the models it loaded. The worker venv of the `classic-cpu` recipe takes about 1.3 GB in the image, its Python 3.13
+> included.
 
 > [!NOTE]
 > Classic PaddleOCR (CPU or GPU) downloads ~50 MB of model weights on first use and caches them under `~/.paddlex/` inside the
 > container. Mount a persistent volume at `/usr/src/paperless/.paddlex` to avoid re-downloads across rebuilds - the bundled
-> compose examples already do this. The `vl-remote` engine downloads nothing on the paperless side; the ~2 GB VLM lives on
-> the GPU server.
+> compose examples already do this. The `paperless` user downloads the models, so the recipes create that directory owned
+> by it, and a new named volume mounted there takes that ownership. With a bind mount, give the host directory to the
+> UID of `paperless` (1000 unless `USERMAP_UID` changes it). The `vl-remote` engine downloads nothing on the paperless
+> side. The ~2 GB VLM lives on the GPU server.
 
 > [!WARNING]
 > `vl-remote` deployment: bring up the [`paddleocr-genai-vllm-server`](https://hub.docker.com/r/paddlepaddle/paddleocr-genai-vllm-server)
@@ -335,6 +403,34 @@ Use this to pass native PaddleOCR codes that have no Tesseract analogue:
 
 Default: *unset* (Tesseract codes from `PAPERLESS_OCR_LANGUAGE` are translated automatically).
 
+### `PAPERLESS_PADDLEOCR_PYTHON`
+
+Path of the Python interpreter that runs the paddle worker, the process in which the plugin runs PaddlePaddle and
+PaddleOCR. That interpreter needs `paddlepaddle` (or `paddlepaddle-gpu`) and `paddleocr`, with the `doc-parser` extra for
+`vl-remote` (see [Installation](#installation)). It does not need the plugin: the worker script ships inside the plugin
+and imports nothing beyond the standard library, paddle and paddleocr.
+
+When the variable is unset, the plugin uses `/opt/paperless-paddleocr/venv/bin/python`, the venv that the recipes and the
+bootstrap scripts create, when that file exists, and otherwise the interpreter that runs paperless-ngx. The recipes
+therefore need no setting, and neither does an install that put PaddlePaddle into the paperless venv on Python 3.12 or
+3.13.
+
+Default: *unset*.
+
+### `PAPERLESS_PADDLEOCR_WORKER_TIMEOUT`
+
+Seconds the plugin waits for the paddle worker to answer one request, such as the check before the first page or the OCR
+of one page. A worker that sends nothing within the limit is killed, the request fails with the last lines the worker
+wrote to stderr, and the next request starts a fresh worker. A value that is not an integer of 1 or more is invalid, and
+the plugin logs a warning and uses the default.
+
+The limit covers the first request as well. The first OCR request of an engine or a language builds its pipeline, and on
+first use the worker downloads the models inside that request, so a slow first download can exceed the limit and fail
+the document. Raise the limit for the first start, or keep the model cache on a volume (see [Notes](#notes)) so that
+later starts skip the download.
+
+Default: `600`.
+
 ### `PAPERLESS_REMOTE_OCR_MODE`
 
 With `PAPERLESS_PADDLEOCR_ENGINE=vl-remote` the parser declares itself a remote service, so this paperless-ngx setting
@@ -433,6 +529,46 @@ declared in the directory's `inference.yml`.
 
 ## Troubleshooting
 
+### "PaddleOCR is not installed in the worker interpreter" or "The paddle worker cannot run"
+
+`check_options` asks the paddle worker for its paddle and paddleocr versions before the first page of a document, and the
+message names the interpreter the plugin started:
+
+- `/opt/paperless-paddleocr/venv/bin/python`: the worker venv exists but lacks a package. Rebuild the image, or install
+  the requirement file of the engine into the venv (below).
+- The interpreter that runs paperless-ngx, such as `/usr/local/bin/python3`: the image has no worker venv, so the plugin
+  fell back to that interpreter, which has no PaddlePaddle. The Python 3.14 of the paperless-ngx 3.1 and later images
+  cannot install it. Install the worker venv as [Installation](#installation) describes, or set
+  [`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python).
+- The value of `PAPERLESS_PADDLEOCR_PYTHON`, with `Cannot start the paddle worker` in the message: that path does not
+  exist or cannot run. Correct the setting.
+
+The worker runs as the user that runs paperless-ngx, `paperless` in the Docker images, so check the interpreter as that
+user:
+
+```bash
+docker compose exec -u paperless paperless /opt/paperless-paddleocr/venv/bin/python \
+    -c "import paddle, paddleocr; print(paddle.__version__, paddleocr.__version__)"
+```
+
+`Permission denied` means that user cannot read the interpreter, for example one under `/root/.local/share/uv/python`
+that uv installed as root without `UV_PYTHON_INSTALL_DIR`. To install a requirement file into the worker venv by hand,
+with `--upgrade` to replace older releases:
+
+```bash
+uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r paddle-requirements.txt
+```
+
+### `vl-remote` fails with "PaddleOCR-VL dependencies are missing" or "PaddleOCR-VL is not available"
+
+The worker venv lacks the `doc-parser` extra of PaddleOCR, or holds a `paddleocr` release that predates PaddleOCR-VL.
+The `vl-remote` recipe installs [`paddle-requirements-vl.txt`](paddle-requirements-vl.txt). For a worker venv from
+another recipe or from a bootstrap script, install that file into it:
+
+```bash
+uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade -r paddle-requirements-vl.txt
+```
+
 ### `pip install` of `paddlepaddle-gpu` fails with `No matching distribution`
 
 `paddlepaddle-gpu` ships from Baidu's custom index:
@@ -441,8 +577,9 @@ declared in the directory's `inference.yml`.
 pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu
 ```
 
-Pick `cu126` / `cu129` / `cu118` to match your host's CUDA driver - see
-[`examples/extract-wheel/README.md`](examples/extract-wheel/README.md#gpu-notes).
+The recipes and `setup-gpu.sh` run the same install into the worker venv with
+`uv pip install --python /opt/paperless-paddleocr/venv/bin/python`. Pick `cu126` / `cu129` / `cu118` to match your host's
+CUDA driver - see [`examples/extract-wheel/README.md`](examples/extract-wheel/README.md#gpu-notes).
 
 ### `classic-gpu` engine fails with "no CUDA device is visible"
 
@@ -453,7 +590,7 @@ Check:
 2. `nvidia-container-toolkit` is installed and configured for Docker.
 3. The container has GPU access (`docker run --gpus all …`, or compose `deploy.resources.reservations.devices` - see
    [`examples/docker-compose.classic-gpu.yml`](examples/docker-compose.classic-gpu.yml)).
-4. `paddlepaddle-gpu` (not `paddlepaddle`) is installed in the image. The recipe Dockerfile takes care of this.
+4. `paddlepaddle-gpu` (not `paddlepaddle`) is installed in the worker venv. The recipe Dockerfile takes care of this.
 
 ### `apt-get` fails with "Could not resolve"
 
