@@ -7,6 +7,15 @@ set for the worker process alone.
 import os
 from types import SimpleNamespace
 
+if os.environ.get("FAKE_PADDLEPADDLE_FAIL_IMPORT") == "1":
+    raise ImportError("No module named 'paddle'")
+
+# One write from Python and one from native code at import, so each spawned
+# worker fails its first response when it imports paddle before it claims
+# stdout.
+print("noise from the paddle import")
+os.write(1, b"native noise from the paddle import\n")
+
 __version__ = "3.2.1"
 
 _device = None

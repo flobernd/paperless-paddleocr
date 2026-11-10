@@ -29,7 +29,12 @@ Spawn = Callable[..., subprocess.Popen[str]]
 
 
 @pytest.fixture
-def spawn_worker() -> Iterator[Spawn]:
+def construction_log(tmp_path: Path) -> Path:
+    return tmp_path / "constructions.log"
+
+
+@pytest.fixture
+def spawn_worker(construction_log: Path) -> Iterator[Spawn]:
     with contextlib.ExitStack() as stack:
 
         def spawn(**env: str) -> subprocess.Popen[str]:
@@ -39,7 +44,12 @@ def spawn_worker() -> Iterator[Spawn]:
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     text=True,
-                    env={**os.environ, "PYTHONPATH": str(FAKES), **env},
+                    env={
+                        **os.environ,
+                        "FAKE_PADDLE_CONSTRUCTION_LOG": str(construction_log),
+                        "PYTHONPATH": str(FAKES),
+                        **env,
+                    },
                 ),
             )
             # The kill runs before Popen.__exit__ closes the pipes and reaps
@@ -84,6 +94,10 @@ def _call(proc: subprocess.Popen[str], request: dict[str, Any]) -> dict[str, Any
     return response
 
 
+def _constructions(log: Path, name: str) -> int:
+    return log.read_text(encoding="utf-8").splitlines().count(name)
+
+
 def test_ping_reports_versions_and_devices(spawn_worker):
     worker = spawn_worker(FAKE_CUDA_DEVICES="2")
     result = _call(worker, {"id": 1, "op": "ping"})["result"]
@@ -99,6 +113,12 @@ def test_ping_reports_versions_and_devices(spawn_worker):
 def test_ping_reports_missing_paddleocr_as_null(worker_without_paddleocr):
     result = _call(worker_without_paddleocr, {"id": 1, "op": "ping"})["result"]
     assert result["paddleocr"] is None
+
+
+def test_ping_reports_missing_paddle_as_null_beside_paddleocr(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLEPADDLE_FAIL_IMPORT="1")
+    result = _call(worker, {"id": 1, "op": "ping"})["result"]
+    assert (result["paddle"], result["paddleocr"]) == (None, "3.4.0")
 
 
 def test_classic_returns_plain_lists(worker, png):
@@ -119,14 +139,20 @@ def test_classic_returns_plain_lists(worker, png):
     }
 
 
-def test_classic_reuses_one_engine_per_kwargs(worker, png):
+def test_classic_result_of_an_unexpected_type_is_an_error(worker, png):
+    kwargs = {"device": "cpu", "unexpected_result": True}
+    request = {"id": 13, "op": "classic", "image": str(png), "kwargs": kwargs}
+    assert _call(worker, request)["ok"] is False
+
+
+def test_classic_reuses_one_engine_per_kwargs(worker, png, construction_log):
     for _ in range(2):
         _call(worker, {"id": 3, "op": "classic", "image": str(png), "kwargs": {"device": "cpu"}})
     _call(
         worker,
         {"id": 4, "op": "classic", "image": str(png), "kwargs": {"device": "cpu", "lang": "de"}},
     )
-    assert _call(worker, {"id": 5, "op": "ping"})["result"]["classic_engines"] == 2
+    assert _constructions(construction_log, "PaddleOCR") == 2
 
 
 def test_vl_normalizes_blocks_and_reports_spotting(worker, png):
@@ -179,14 +205,41 @@ def test_vl_pipeline_without_the_version_parameter_runs_in_ocr_mode(spawn_worker
     assert response["result"]["spotting_capable"] is False
 
 
+def test_vl_reuses_one_pipeline_per_configuration(worker, png, construction_log):
+    request = {
+        "op": "vl",
+        "image": str(png),
+        "kwargs": {"device": "cpu"},
+        "pipeline_version": "v1.5",
+    }
+    for request_id in (14, 15):
+        _call(worker, {**request, "id": request_id})
+    other_server = {"device": "cpu", "vl_rec_server_url": "http://other:8118/v1"}
+    _call(worker, {**request, "id": 16, "kwargs": other_server})
+    _call(worker, {**request, "id": 17, "pipeline_version": "v1"})
+    assert _constructions(construction_log, "PaddleOCRVL") == 3
+
+
 def test_orientation_returns_the_top_label_and_score(worker, png):
     result = _call(worker, {"id": 8, "op": "orientation", "image": str(png)})["result"]
     assert result == {"label": "90", "score": pytest.approx(0.97)}
 
 
+def test_orientation_reuses_one_model(worker, png, construction_log):
+    for request_id in (18, 19):
+        _call(worker, {"id": request_id, "op": "orientation", "image": str(png)})
+    assert _constructions(construction_log, "DocImgOrientationClassification") == 1
+
+
 def test_unknown_op_is_an_error_response(worker):
     response = _call(worker, {"id": 9, "op": "dance"})
     assert response["ok"] is False and response["error"]["type"] == "ValueError"
+
+
+def test_exception_that_cannot_be_printed_is_an_error_response(worker, png):
+    kwargs = {"device": "cpu", "unprintable_error": True}
+    response = _call(worker, {"id": 20, "op": "classic", "image": str(png), "kwargs": kwargs})
+    assert response["error"]["type"] == "UnprintableError"
 
 
 @pytest.mark.parametrize("line", ["not json", '{"op": "ping"}'])
