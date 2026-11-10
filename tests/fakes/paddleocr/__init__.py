@@ -17,6 +17,12 @@ import numpy as np
 if os.environ.get("FAKE_PADDLE_FAIL_IMPORT") == "1":
     raise ImportError("No module named 'paddleocr'")
 
+# Fails the first import only, as for a package the operator installs while
+# the worker runs.
+if os.environ.get("FAKE_PADDLE_FAIL_IMPORT") == "once":
+    os.environ["FAKE_PADDLE_FAIL_IMPORT"] = ""
+    raise ImportError("No module named 'paddleocr'")
+
 __version__ = "3.4.0"
 
 

@@ -529,7 +529,7 @@ declared in the directory's `inference.yml`.
 
 ## Troubleshooting
 
-### "PaddleOCR is not installed in the worker interpreter" or "The paddle worker cannot run"
+### "PaddleOCR does not import in the worker interpreter" or "The paddle worker cannot run"
 
 `check_options` asks the paddle worker for its paddle and paddleocr versions before the first page of a document, and the
 message names the interpreter the plugin started:
@@ -542,6 +542,11 @@ message names the interpreter the plugin started:
   [`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python).
 - The value of `PAPERLESS_PADDLEOCR_PYTHON`, with `Cannot start the paddle worker` in the message: that path does not
   exist or cannot run. Correct the setting.
+
+For a package that does not import, the message also carries the error of its import. A `ModuleNotFoundError` is a
+missing package, the first two cases above. Paddle creates `~/.cache/paddle` on import, so a `PermissionError` there
+means the user that runs paperless-ngx cannot write the `.cache` directory of its home, for example one that root
+created.
 
 The worker runs as the user that runs paperless-ngx, `paperless` in the Docker images, so check the interpreter as that
 user:
