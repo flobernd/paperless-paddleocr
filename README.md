@@ -423,8 +423,9 @@ Default: *unset* (Tesseract codes from `PAPERLESS_OCR_LANGUAGE` are translated a
 
 Path of the Python interpreter that runs the paddle worker, the process in which the plugin runs PaddlePaddle and
 PaddleOCR. That interpreter needs `paddlepaddle` (or `paddlepaddle-gpu`) and `paddleocr`, with the `doc-parser` extra
-for `vl-remote` (see [Installation](#installation)). It does not need the plugin: the worker script ships inside the
-plugin and imports nothing beyond the standard library, paddle and paddleocr.
+for `vl-remote` (see [Installation](#installation)). It must be Python 3.11 to 3.13, because the plugin starts the
+worker with `-P`, which Python 3.11 introduced, and PaddlePaddle ships wheels up to Python 3.13. It does not need the
+plugin: the worker script ships inside the plugin and imports nothing beyond the standard library, paddle and paddleocr.
 
 When the variable is unset, the plugin uses `/opt/paperless-paddleocr/venv/bin/python`, the venv that the recipes and
 the bootstrap scripts create, when that file exists, and otherwise the interpreter that runs paperless-ngx. The recipes
