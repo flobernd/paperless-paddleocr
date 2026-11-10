@@ -43,6 +43,7 @@ from paperless_paddleocr import (
     DEFAULT_STRATEGY,
     DEFAULT_VL_MODEL_NAME,
     DEFAULT_VL_PIPELINE_VERSION,
+    DEFAULT_WORKER_PYTHON,
     ENGINE_CHOICES,
     STRATEGY_CHOICES,
 )
@@ -496,15 +497,19 @@ def check_options(options: Any) -> None:
         raise MissingDependencyError(
             "PaddleOCR does not import in the worker interpreter "
             f"{worker.worker_interpreter()}: {ping['paddleocr_error']}\n"
-            "If it is missing, install paddlepaddle and paddleocr there "
-            "(see README, Installation).",
+            + _install_hint(
+                "If it is missing, install paddlepaddle and paddleocr there "
+                "(see README, Installation).",
+            ),
         )
     if ping["paddle"] is None:
         raise MissingDependencyError(
             "PaddlePaddle does not import in the worker interpreter "
             f"{worker.worker_interpreter()}: {ping['paddle_error']}\n"
-            "If it is missing, install paddlepaddle there, or paddlepaddle-gpu "
-            "for the classic-gpu engine (see README, Installation).",
+            + _install_hint(
+                "If it is missing, install paddlepaddle there, or paddlepaddle-gpu "
+                "for the classic-gpu engine (see README, Installation).",
+            ),
         )
 
     if engine == "vl-remote":
@@ -535,6 +540,17 @@ def check_options(options: Any) -> None:
             "container has GPU access (e.g. compose `deploy.resources."
             "reservations.devices` or `docker run --gpus all`).",
         )
+
+
+def _install_hint(hint: str) -> str:
+    # The fallback is the interpreter of paperless-ngx, and its Python 3.14 in
+    # the 3.1 and later images has no PaddlePaddle wheel to install there.
+    if worker.uses_fallback_interpreter():
+        return (
+            f"No worker venv was found at {DEFAULT_WORKER_PYTHON}. Install the worker venv "
+            "as the README describes (Installation)."
+        )
+    return hint
 
 
 def _ping_worker() -> dict[str, Any]:
