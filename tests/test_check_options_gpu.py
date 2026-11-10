@@ -8,13 +8,14 @@ package that does not import, with the reason beside), whether
 
 from __future__ import annotations
 
+import sys
 import types
 from typing import Any
 
 import pytest
 from ocrmypdf.exceptions import MissingDependencyError
 
-from paperless_paddleocr import ocrmypdf_plugin
+from paperless_paddleocr import DEFAULT_WORKER_PYTHON, ocrmypdf_plugin
 from paperless_paddleocr.paddle_engine import worker
 
 INTERPRETER = "/srv/paddle-venv/bin/python"
@@ -100,6 +101,44 @@ def test_missing_paddle_names_paddlepaddle_and_the_worker_interpreter(monkeypatc
         ocrmypdf_plugin.check_options(_opts(engine))
     assert "paddlepaddle" in str(info.value)
     assert INTERPRETER in str(info.value)
+
+
+@pytest.mark.parametrize("missing", [NO_PADDLE, NO_PADDLEOCR])
+def test_missing_package_without_a_worker_venv_names_the_default_venv(monkeypatch, missing):
+    # Then the worker runs under this interpreter, where PaddlePaddle may have
+    # no wheel, so installing the packages there is no advice to give.
+    monkeypatch.delenv("PAPERLESS_PADDLEOCR_PYTHON")
+    monkeypatch.setattr(worker, "DEFAULT_WORKER_PYTHON", "/nonexistent/venv/bin/python")
+    _answer(monkeypatch, _ping(**missing, cuda_devices=0))
+    with pytest.raises(MissingDependencyError) as info:
+        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
+    assert f"No worker venv was found at {DEFAULT_WORKER_PYTHON}" in str(info.value)
+    assert sys.executable in str(info.value)
+
+
+@pytest.mark.parametrize("missing", [NO_PADDLE, NO_PADDLEOCR])
+def test_missing_package_in_the_interpreter_of_the_variable_reports_no_missing_venv(
+    monkeypatch, missing
+):
+    monkeypatch.setattr(worker, "DEFAULT_WORKER_PYTHON", "/nonexistent/venv/bin/python")
+    _answer(monkeypatch, _ping(**missing, cuda_devices=0))
+    with pytest.raises(MissingDependencyError) as info:
+        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
+    assert "No worker venv was found" not in str(info.value)
+
+
+@pytest.mark.parametrize("missing", [NO_PADDLE, NO_PADDLEOCR])
+def test_missing_package_in_the_default_venv_reports_no_missing_venv(
+    monkeypatch, tmp_path, missing
+):
+    default = tmp_path / "python"
+    default.touch()
+    monkeypatch.delenv("PAPERLESS_PADDLEOCR_PYTHON")
+    monkeypatch.setattr(worker, "DEFAULT_WORKER_PYTHON", str(default))
+    _answer(monkeypatch, _ping(**missing, cuda_devices=0))
+    with pytest.raises(MissingDependencyError) as info:
+        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
+    assert "No worker venv was found" not in str(info.value)
 
 
 def test_paddleocr_that_does_not_import_names_the_reason(monkeypatch):

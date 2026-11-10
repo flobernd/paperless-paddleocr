@@ -113,6 +113,14 @@ def worker_interpreter() -> str:
     return sys.executable
 
 
+def uses_fallback_interpreter() -> bool:
+    """Whether :func:`worker_interpreter` falls back to this interpreter."""
+    return (
+        not os.environ.get("PAPERLESS_PADDLEOCR_PYTHON")
+        and not Path(DEFAULT_WORKER_PYTHON).exists()
+    )
+
+
 def worker_environment() -> dict[str, str]:
     # The upstream parse method sets OMP_THREAD_LIMIT=1 for Tesseract, which
     # would hold PaddlePaddle to one thread.
