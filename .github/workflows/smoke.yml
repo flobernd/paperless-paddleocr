@@ -2,10 +2,10 @@ name: Smoke (paperless-ngx)
 
 # Runs inside the real paperless-ngx image so we catch API drift in
 # the paperless parser-plugin surface that the lightweight unit suite
-# (which never imports Django/paperless) cannot. The job migrates a
-# SQLite database, and the smoke test checks the entry point and the
-# imports and builds the ocrmypdf arguments with the parser. It runs no
-# OCR, so the job installs neither PaddlePaddle nor PaddleOCR.
+# (which never imports Django/paperless) cannot. The job installs the
+# worker venv with PaddlePaddle and PaddleOCR, and the smoke test sends
+# one page through the paddle worker, which downloads the PP-OCR models
+# from Hugging Face on first use.
 
 on:
   push:
@@ -46,6 +46,25 @@ jobs:
       - name: Install package (no deps - paperless image already has ocrmypdf)
         run: |
           "${{ steps.py.outputs.bin }}" -m pip install --no-deps --break-system-packages .
+
+      # These are the steps of setup.sh. Keep the two in step. The venv lies
+      # at the path the plugin looks for, so PAPERLESS_PADDLEOCR_PYTHON stays
+      # unset. The image ships uv, which setup.sh installs when it is missing.
+      # setup.sh also resets HOME and hands the model cache to the paperless
+      # user, who runs the worker in a deployment. This job runs each step as
+      # root, the smoke test and its worker too, so neither applies here.
+      - name: Install the worker venv
+        env:
+          UV_PYTHON_INSTALL_DIR: /opt/paperless-paddleocr/python
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1
+          uv python install 3.13
+          uv venv --python 3.13 /opt/paperless-paddleocr/venv
+          uv pip install --no-cache --python /opt/paperless-paddleocr/venv/bin/python \
+            -r paddle-requirements.txt
+          chmod -R a+rX /opt/paperless-paddleocr
 
       # The smoke test constructs the parser, and OcrConfig() reads the
       # application configuration from the database.

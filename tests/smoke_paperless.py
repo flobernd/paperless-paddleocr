@@ -15,8 +15,14 @@ lightweight unit suite cannot:
   wiring binds our engine
 * the Tesseract→PaddleOCR language mapping behaves
 * the parser subclasses the upstream Tesseract parser, and the arguments its
-  builder returns carry the engine wiring, keep the user args' precedence and
-  never carry the API key.
+  builder returns carry the engine wiring and the options from the
+  environment, keep the user args' precedence and never carry the API key
+* one page goes through the paddle worker: the classic-cpu engine reads its
+  text and tags the archive, and the vl-remote engine fails the document
+  when its server does not answer.
+
+The document run needs a worker venv, as the recipes and ``setup.sh``
+install it.
 
 Exit code is non-zero on the first failed check so the workflow fails loudly.
 """
@@ -24,7 +30,10 @@ Exit code is non-zero on the first failed check so the workflow fails loudly.
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.util
 import sys
+from pathlib import Path
+from types import ModuleType
 
 
 def _fail(msg: str) -> None:
@@ -91,8 +100,9 @@ def _expect_no_api_key(args: dict) -> None:
 
 def check_parser_contract() -> None:
     # Runs after django.setup() in check_parser_imports.
+    import os
     import tempfile
-    from pathlib import Path
+    from unittest import mock
 
     from django.test import override_settings
     from paperless.parsers.tesseract import RasterisedDocumentParser
@@ -130,6 +140,22 @@ def check_parser_contract() -> None:
         _expect(args, "paddle_engine", "classic-cpu")
         _ok("builder adds the plugin, the PaddleOCR language and the engine")
 
+        # Values other than the defaults, so a misspelled key fails. The
+        # parser reads the environment when it is constructed.
+        environment = {
+            "PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY": "merge",
+            "PAPERLESS_PADDLEOCR_VL_MODEL_NAME": "smoke-model",
+            "PAPERLESS_PADDLEOCR_VL_PIPELINE_VERSION": "v1",
+            "PAPERLESS_PADDLEOCR_VL_SERVER_URL": "http://vl.invalid:8118",
+        }
+        with mock.patch.dict(os.environ, environment):
+            args = build()
+        _expect(args, "paddle_multi_lang_strategy", "merge")
+        _expect(args, "paddle_vl_model_name", "smoke-model")
+        _expect(args, "paddle_vl_pipeline_version", "v1")
+        _expect(args, "paddle_vl_server_url", "http://vl.invalid:8118")
+        _ok("builder passes the strategy and the VL options from the environment")
+
         # OcrConfig reads settings.OCR_USER_ARGS, which paperless fills from
         # PAPERLESS_OCR_USER_ARGS once at import, so the environment cannot
         # change it here.
@@ -158,12 +184,81 @@ def check_parser_contract() -> None:
         _ok("user plugin list is kept, with this plugin listed once")
 
 
+def _make_test_page() -> ModuleType:
+    # By path, because neither tests/ nor tests/e2e/ is a package.
+    path = Path(__file__).resolve().parent / "e2e" / "make_test_page.py"
+    spec = importlib.util.spec_from_file_location("make_test_page", path)
+    if spec is None or spec.loader is None:
+        _fail(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_document_run() -> None:
+    # Runs after django.setup() in check_parser_imports.
+    import os
+    import tempfile
+    from unittest import mock
+
+    import pikepdf
+    from documents.parsers import ParseError
+
+    import paperless_paddleocr.parser as parser_module
+
+    with tempfile.TemporaryDirectory() as tmp_name:
+        png = Path(tmp_name) / "page.png"
+        _make_test_page().write_page(png)
+
+        # patch.dict undoes each change to the environment, the one of the
+        # parse method (OMP_THREAD_LIMIT) included, also when a check exits.
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PAPERLESS_PADDLEOCR_ENGINE", None)
+            with parser_module.PaperlessPaddleParser() as parser:
+                parser.parse(png, "image/png")
+                text = parser.get_text()
+                if "Paperless" not in text:
+                    _fail(f"the classic-cpu text lacks 'Paperless': {text!r}")
+                with pikepdf.open(parser.get_archive_path()) as pdf:
+                    creator = str(pdf.docinfo.get("/Creator", ""))
+                if "PaddleOCR" not in creator:
+                    _fail(f"the archive's /Creator {creator!r} does not name PaddleOCR")
+        _ok(f"classic-cpu reads one page through the worker, /Creator {creator!r}")
+
+        remote = {
+            "PAPERLESS_PADDLEOCR_ENGINE": "vl-remote",
+            # Nothing listens on the discard port 9, so the connection is refused.
+            "PAPERLESS_PADDLEOCR_VL_SERVER_URL": "http://127.0.0.1:9",
+        }
+        try:
+            with mock.patch.dict(os.environ, remote):
+                # The parser reads the remote flag at import, and the class
+                # of the old module keeps the old value.
+                parser_class = importlib.reload(parser_module).PaperlessPaddleParser
+                if parser_class.uses_remote_service is not True:
+                    _fail("uses_remote_service is not True for the vl-remote engine")
+                with parser_class() as parser:
+                    try:
+                        parser.parse(png, "image/png")
+                    except ParseError as e:
+                        error = str(e)
+                    else:
+                        _fail("parse succeeded although the VL server does not answer")
+                if "127.0.0.1:9" not in error:
+                    _fail(f"the ParseError does not name the VL server: {error!r}")
+        finally:
+            # Later code sees the module of the restored environment.
+            importlib.reload(parser_module)
+        _ok(f"vl-remote fails the document without a server: {error.splitlines()[0]}")
+
+
 def main() -> None:
     print("== paperless-paddleocr smoke test ==", flush=True)
     check_entry_point()
     check_plugin_and_languages()
     check_parser_imports()
     check_parser_contract()
+    check_document_run()
     print("== all smoke checks passed ==", flush=True)
 
 

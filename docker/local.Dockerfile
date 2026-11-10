@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # paperless-ngx + paperless-paddleocr (classic-cpu engine) from the local
-# checkout, for the smoke run and for local verification. It follows
+# checkout, for local verification, such as a run of
+# tests/smoke_paperless.py against a change before it is pushed. It follows
 # examples/Dockerfile.classic-cpu, which fetches the plugin from GitHub.
 #
 # Build from the repository root:
