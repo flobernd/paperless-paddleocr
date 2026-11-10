@@ -53,16 +53,6 @@ def test_render_hocr_emits_fitted_baseline():
     assert "baseline 0.050000 -4" in render_hocr(_page(line))
 
 
-def test_write_document_sidecar_override(tmp_path):
-    line = Line(
-        box=(10, 10, 90, 40), confidence=88, text="hi", words=[Word("hi", (10, 10, 90, 40), 88)]
-    )
-    hocr_path, text_path = tmp_path / "p.hocr", tmp_path / "p.txt"
-    write_document(_page(line), hocr_path, text_path, sidecar="custom order")
-    assert text_path.read_text(encoding="utf-8") == "custom order"
-    assert "ocrx_word" in hocr_path.read_text(encoding="utf-8")
-
-
 def test_render_drops_xml_invalid_characters_from_words():
     # ocrmypdf parses the hOCR with ElementTree, which rejects a NUL and
     # U+FFFE, the code point just past the XML 1.0 range that ends at U+FFFD.

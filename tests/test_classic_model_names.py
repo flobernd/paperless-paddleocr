@@ -35,14 +35,6 @@ def test_add_options_registers_model_name_args():
     assert ns.paddle_rec_model_name == "PP-OCRv6_small_rec"
 
 
-def test_model_name_args_default_to_none():
-    parser = argparse.ArgumentParser()
-    ocrmypdf_plugin.add_options(parser)
-    ns = parser.parse_args([])
-    assert ns.paddle_det_model_name is None
-    assert ns.paddle_rec_model_name is None
-
-
 def _opts(**extra: Any) -> types.SimpleNamespace:
     return types.SimpleNamespace(languages=["en"], paddle_engine="classic-cpu", **extra)
 

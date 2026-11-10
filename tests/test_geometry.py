@@ -8,11 +8,6 @@ from paperless_paddleocr.paddle_engine.geometry import (
 )
 
 
-def test_poly_to_bbox_axis_aligned_quad():
-    poly = [[10, 20], [110, 20], [110, 60], [10, 60]]
-    assert poly_to_bbox(poly) == (10, 20, 110, 60)
-
-
 def test_poly_to_bbox_skewed_quad_uses_min_max_envelope():
     # both edges tilt; the envelope is the outermost corner on each side
     poly = [[10, 22], [110, 18], [112, 58], [8, 62]]

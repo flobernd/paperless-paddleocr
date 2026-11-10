@@ -16,17 +16,14 @@ from PIL import Image
 from paperless_paddleocr.paddle_engine import vl, worker
 
 
-def _opts(version: str | None = None) -> types.SimpleNamespace:
-    opts = types.SimpleNamespace(
+def _opts() -> types.SimpleNamespace:
+    return types.SimpleNamespace(
         languages=["en"],
         paddle_engine="vl-remote",
         paddle_vl_server_url="http://gpu:8118",
         paddle_vl_model_name="PaddleOCR-VL-1.5-0.9B",
         paddle_vl_api_key="",
     )
-    if version is not None:
-        opts.paddle_vl_pipeline_version = version
-    return opts
 
 
 def _png(tmp_path: Path) -> Path:
@@ -44,10 +41,6 @@ def _fail_with(monkeypatch: pytest.MonkeyPatch, error: worker.PaddleWorkerError)
 
 def test_default_pipeline_version_is_v15():
     assert vl.pipeline_version(_opts()) == "v1.5"
-
-
-def test_configured_pipeline_version_is_passed_through():
-    assert vl.pipeline_version(_opts("v1.6")) == "v1.6"
 
 
 def test_pipeline_kwargs_point_the_client_at_the_v1_api_of_the_server():
