@@ -7,10 +7,10 @@ remote vLLM server for recognition, and this module places the words the
 server returns. Two response shapes are handled:
 
 * **spotting** - native per-word polygons (available when the installed
-  ``paddleocr`` exposes ``pipeline_version``); words are clustered into
+  ``paddleocr`` exposes ``pipeline_version``). The words are clustered into
   reading lines geometrically.
 * **ocr** - blocks with a multi-line text transcription but no word
-  boxes; each block is split into lines and the words are positioned by the
+  boxes. Each block is split into lines and the words are positioned by the
   proportional estimator.
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import re
 import threading
 from pathlib import Path
@@ -99,11 +100,24 @@ def _vl_option(options: Any, name: str, default: str = "") -> str:
     return (getattr(options, name, "") or "").strip() or default
 
 
+def resolve_vl_api_key(options: Any) -> str:
+    """The ``paddle_vl_api_key`` option when set, else ``PAPERLESS_PADDLEOCR_VL_API_KEY``.
+
+    The paperless parser never passes the key as an option, because the
+    inherited parse method logs the ocrmypdf arguments at debug level. The
+    option serves a hand-run ocrmypdf.
+    """
+    return (
+        _vl_option(options, "paddle_vl_api_key")
+        or os.environ.get("PAPERLESS_PADDLEOCR_VL_API_KEY", "").strip()
+    )
+
+
 def _pipeline_key(options: Any) -> tuple[Any, ...]:
     return (
         _vl_option(options, "paddle_vl_server_url"),
         _vl_option(options, "paddle_vl_model_name"),
-        _vl_option(options, "paddle_vl_api_key"),
+        resolve_vl_api_key(options),
         _vl_option(options, "paddle_vl_pipeline_version", DEFAULT_VL_PIPELINE_VERSION),
     )
 
@@ -153,7 +167,7 @@ def _build_pipeline(options: Any) -> Any:
 
     url = normalize_server_url(_vl_option(options, "paddle_vl_server_url"))
     model_name = _vl_option(options, "paddle_vl_model_name", DEFAULT_VL_MODEL_NAME)
-    api_key = _vl_option(options, "paddle_vl_api_key") or None
+    api_key = resolve_vl_api_key(options) or None
 
     # PaddleOCRVL.__init__ probes paddle.amp.is_bfloat16_supported() against
     # the active device before the device= kwarg is applied; with no device

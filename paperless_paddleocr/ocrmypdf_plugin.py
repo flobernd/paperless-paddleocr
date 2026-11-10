@@ -12,8 +12,8 @@ provides two pieces:
 * :func:`add_options`, :func:`check_options`, :func:`get_ocr_engine`
   hookimpls that register the ``--paddle-engine`` /
   ``--paddle-multi-lang-strategy`` / ``--paddle-vl-*`` /
-  ``--paddle-*-model-dir`` CLI args (so they're acceptable as kwargs to
-  ``ocrmypdf.ocr()``) and bind the engine.
+  ``--paddle-*-model-dir`` options of the ocrmypdf command line and bind
+  the engine.
 
 Why this plugin is only invoked when paperless explicitly asks for it: the
 engine lives inside this package (see :mod:`paperless_paddleocr.paddle_engine`)
@@ -58,7 +58,7 @@ from paperless_paddleocr.paddle_engine.hocr import (
     write_document,
 )
 from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
-from paperless_paddleocr.paddle_engine.vl import normalize_server_url
+from paperless_paddleocr.paddle_engine.vl import normalize_server_url, resolve_vl_api_key
 
 log = logging.getLogger("paperless.paddleocr.plugin")
 
@@ -359,11 +359,10 @@ def _merged_page(
 
 @ocrmypdf.hookimpl
 def add_options(parser: Any) -> None:
-    """Register the ``--paddle-*`` CLI args so they're accepted as kwargs.
+    """Register the ``--paddle-*`` options of the ocrmypdf command line.
 
-    ocrmypdf validates kwargs against its argparse parser; we need these
-    options registered before ``ocrmypdf.ocr(paddle_engine=…, …)`` is called
-    from the paperless parser.
+    From ocrmypdf 17.4.0 on, the Python API stores an unknown keyword such as
+    ``paddle_engine`` without a check against this parser.
     """
     paddle = parser.add_argument_group(
         "PaddleOCR",
@@ -500,7 +499,7 @@ def check_options(options: Any) -> None:
                 "PAPERLESS_PADDLEOCR_VL_SERVER_URL env var) to point at a "
                 "paddleocr-genai-vllm-server endpoint.",
             )
-        _probe_vl_server(server_url, (getattr(options, "paddle_vl_api_key", "") or "").strip())
+        _probe_vl_server(server_url, resolve_vl_api_key(options))
         return
 
     # classic-cpu / classic-gpu both need PaddleOCR importable locally.
