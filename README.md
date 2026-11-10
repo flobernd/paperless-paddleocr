@@ -277,12 +277,17 @@ On first startup the container will:
 
 ### Updating
 
-Re-build the custom image with a newer `PLUGIN_REF` and recreate the container. The `paddleocr-genai-vllm-server` sidecar
-(for `vl-remote`) is updated independently by pulling a newer image tag.
+Re-build the custom image with a newer `PLUGIN_REF` and the recipe Dockerfile of the same ref, and recreate the
+container. A local copy of an older recipe builds an image without the worker venv that this version runs PaddlePaddle
+in. The `paddleocr-genai-vllm-server` sidecar (for `vl-remote`) is updated independently by pulling a newer image tag.
 
 The recipes install the worker venv in a layer of its own, which Docker reuses as long as the requirement file of the
 new ref is unchanged, so a rebuild keeps the PaddlePaddle and PaddleOCR versions of the earlier build. Build with
 `--no-cache` to resolve them again.
+
+A bootstrap install skips the plugin when a version of it is installed, so a restart of the same container keeps the old
+version. Put the new artifact and the requirement file of the same ref into `paperless-paddleocr/` and recreate the
+container, which starts without the plugin, so the script installs the new artifact.
 
 The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocrmypdf 17 ignores either keyword if
 `PAPERLESS_OCR_USER_ARGS` still sets it.
@@ -476,7 +481,7 @@ parser uses, then passed to `ocrmypdf.ocr()` exactly the same way:
 | `PAPERLESS_OCR_IMAGE_DPI` | Fallback DPI for images without DPI metadata. |
 | `PAPERLESS_OCR_COLOR_CONVERSION_STRATEGY` | Ghostscript color strategy for PDF/A. |
 | `PAPERLESS_OCR_MAX_IMAGE_PIXELS` | Max pixels per page. |
-| `PAPERLESS_OCR_USER_ARGS` | JSON-encoded extra kwargs merged into the ocrmypdf call. |
+| `PAPERLESS_OCR_USER_ARGS` | JSON-encoded extra kwargs merged into the ocrmypdf call. A `paddle_engine` there is ignored, since `PAPERLESS_PADDLEOCR_ENGINE` alone sets the engine. A `paddle_vl_api_key` is dropped (set `PAPERLESS_PADDLEOCR_VL_API_KEY` instead). This plugin goes first in `plugins`, before the plugins the user args list. |
 | `PAPERLESS_ARCHIVE_FILE_GENERATION` | Whether to produce searchable PDFs. |
 
 ## Language handling
@@ -490,7 +495,8 @@ PaddleOCR uses different language codes from Tesseract and runs a single languag
    language and combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks
    the language whose pass has the highest aggregate confidence and uses its words. `merge` runs an NMS over word boxes
    from every pass and keeps the highest-confidence box per location. Either way, per-page wall time scales linearly
-   with the number of languages because each pass still runs.
+   with the number of languages because each pass still runs. If one language pass fails, the document fails with an
+   error that names the language.
 
 If you need broad multi-script coverage without paying that cost, set `PAPERLESS_PADDLEOCR_LANGUAGE` to one of the bundled
 multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
