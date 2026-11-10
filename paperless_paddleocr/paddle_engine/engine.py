@@ -40,26 +40,6 @@ def _variant(options: Any) -> str:
     return getattr(options, "paddle_engine", DEFAULT_ENGINE)
 
 
-def _silence_paddle_signal_handler() -> None:
-    """Drop paddle's C++ signal handler so worker recycling stays quiet.
-
-    paddlepaddle installs a SIGTERM/SIGSEGV handler that prints an alarming
-    C++ traceback - for a plain SIGTERM, a fake ``FatalError: Termination
-    signal`` with an empty stack. paperless sets
-    ``CELERY_WORKER_MAX_TASKS_PER_CHILD = 1``, so every document ends with its
-    celery worker being SIGTERM-recycled; without this the log gets that fake
-    error on every page. Called per task because the recycled worker is a
-    fresh process that re-imports (and re-arms) paddle. Best-effort: a missing
-    API or any failure must never block OCR.
-    """
-    try:
-        import paddle
-
-        paddle.disable_signal_handler()
-    except Exception:  # pragma: no cover - cosmetic only
-        pass
-
-
 def _order_page(page: Page) -> str:
     """Reorder page.blocks in banded reading order; return the sidecar text.
 
@@ -123,7 +103,6 @@ class PaddleOCREngine(OcrEngine):
     @staticmethod
     def build_page(input_file: Path, options: Any) -> Page:
         """OCR ``input_file`` with the adapter of the requested engine variant."""
-        _silence_paddle_signal_handler()
         if _variant(options) == "vl-remote":
             return vl.build_page(input_file, options)
         return classic.build_page(input_file, options)

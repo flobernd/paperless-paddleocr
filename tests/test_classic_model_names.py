@@ -1,11 +1,13 @@
-"""Model-name options for the classic pipeline.
+"""Model-name and model-directory options for the classic pipeline.
 
-``add_options`` must register the ``--paddle-*-model-name`` args so
-``ocrmypdf.ocr(paddle_det_model_name=...)`` accepts them as kwargs (paperless
-forwards ``PAPERLESS_OCR_USER_ARGS`` into that call unchanged). Without a name
-kwarg, paddleocr pairs a custom model dir with the default model name from the
-base pipeline config and paddlex rejects the dir with "Model name mismatch",
-so model names are the only way to select non-default official models.
+``add_options`` registers the ``--paddle-*-model-name`` args on the ocrmypdf
+command line. paperless forwards ``PAPERLESS_OCR_USER_ARGS`` into
+``ocrmypdf.ocr(...)`` unchanged, and ocrmypdf 17 keeps a keyword that has no
+option field, such as ``paddle_det_model_name``, as an attribute of the
+options. Without a name kwarg, paddleocr pairs a custom model dir with the
+default model name from the base pipeline config and paddlex rejects the dir
+with "Model name mismatch", so model names are the only way to select
+non-default official models.
 """
 
 from __future__ import annotations
@@ -41,35 +43,30 @@ def test_model_name_args_default_to_none():
     assert ns.paddle_rec_model_name is None
 
 
-class _PaddleOCRStub:
-    """Records the kwargs passed to PaddleOCR(...) for assertion."""
-
-    last_kwargs: dict[str, Any] = {}
-
-    def __init__(self, **kwargs: Any) -> None:
-        _PaddleOCRStub.last_kwargs = dict(kwargs)
-
-
 def _opts(**extra: Any) -> types.SimpleNamespace:
     return types.SimpleNamespace(languages=["en"], paddle_engine="classic-cpu", **extra)
 
 
-def test_build_engine_forwards_model_names(monkeypatch):
-    monkeypatch.setattr(classic, "PaddleOCR", _PaddleOCRStub)
-    classic._build_engine(
+def test_engine_kwargs_forwards_model_names():
+    kwargs = classic.engine_kwargs(
         _opts(
             paddle_det_model_name="PP-OCRv6_small_det",
             paddle_rec_model_name="PP-OCRv6_small_rec",
         )
     )
-    kwargs = _PaddleOCRStub.last_kwargs
     assert kwargs["text_detection_model_name"] == "PP-OCRv6_small_det"
     assert kwargs["text_recognition_model_name"] == "PP-OCRv6_small_rec"
 
 
-def test_build_engine_omits_unset_model_names(monkeypatch):
-    monkeypatch.setattr(classic, "PaddleOCR", _PaddleOCRStub)
-    classic._build_engine(_opts())
-    kwargs = _PaddleOCRStub.last_kwargs
+def test_engine_kwargs_forwards_model_dirs():
+    kwargs = classic.engine_kwargs(
+        _opts(paddle_det_model_dir="/models/det", paddle_rec_model_dir="/models/rec"),
+    )
+    assert kwargs["text_detection_model_dir"] == "/models/det"
+    assert kwargs["text_recognition_model_dir"] == "/models/rec"
+
+
+def test_engine_kwargs_omits_unset_model_names():
+    kwargs = classic.engine_kwargs(_opts())
     assert "text_detection_model_name" not in kwargs
     assert "text_recognition_model_name" not in kwargs

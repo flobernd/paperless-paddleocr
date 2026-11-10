@@ -1,6 +1,6 @@
 """Classic PaddleOCR CNN pipeline adapter.
 
-Runs ``paddleocr.PaddleOCR`` locally on CPU and turns its detection /
+Runs ``paddleocr.PaddleOCR`` in the paddle worker and turns its detection /
 recognition output into the typed :class:`~paperless_paddleocr.paddle_engine.hocr.Page`
 model. PaddleOCR may preprocess (resize) the image before detection; word
 boxes are reported in that preprocessed space, so coordinates are rescaled
@@ -10,34 +10,20 @@ back to the original pixel dimensions before they reach the hOCR.
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
 from paperless_paddleocr.languages import first_paddle_lang, normalize_paddle_lang
+from paperless_paddleocr.paddle_engine import worker
 from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, words_from_text
 from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline
 
-try:
-    from paddleocr import PaddleOCR
-except ImportError:  # pragma: no cover - resolved at install time
-    PaddleOCR = None
-
 log = logging.getLogger("paperless.paddleocr.classic")
 
 OCR_SYSTEM = "PaddleOCR via paperless-paddleocr"
-
-# One engine per configuration, one prediction at a time. Constructing
-# PaddleOCR reloads model weights from disk, and Paddle inference predictors
-# are not thread-safe; ocrmypdf calls generate_hocr from several worker
-# threads when the caller passes jobs > 1. The cache lives until the celery
-# worker is recycled (paperless recycles after every document).
-_CACHE_LOCK = threading.Lock()
-_ENGINE_CACHE: dict[tuple[Any, ...], Any] = {}
-_PREDICT_LOCK = threading.Lock()
 
 #: ``(option attribute, PaddleOCR kwarg)`` per model override, in the order
 #: the constructor kwargs are passed and logged.
@@ -47,24 +33,6 @@ _MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
     ("paddle_rec_model_name", "text_recognition_model_name"),
     ("paddle_rec_model_dir", "text_recognition_model_dir"),
 )
-
-
-def _engine_key(options: Any) -> tuple[Any, ...]:
-    return (
-        _resolve_lang(options),
-        _resolve_device(options),
-        *(getattr(options, attr, None) for attr, _ in _MODEL_OPTIONS),
-    )
-
-
-def _get_engine(options: Any) -> Any:
-    key = _engine_key(options)
-    with _CACHE_LOCK:
-        engine = _ENGINE_CACHE.get(key)
-        if engine is None:
-            engine = _build_engine(options)
-            _ENGINE_CACHE[key] = engine
-    return engine
 
 
 def _resolve_lang(options: Any) -> str:
@@ -83,7 +51,8 @@ def _resolve_device(options: Any) -> str:
     return "gpu" if getattr(options, "paddle_engine", "") == "classic-gpu" else "cpu"
 
 
-def _build_engine(options: Any) -> Any:
+def engine_kwargs(options: Any) -> dict[str, Any]:
+    """The ``PaddleOCR`` constructor arguments for ``options``."""
     device = _resolve_device(options)
     kwargs: dict[str, Any] = {
         "device": device,
@@ -108,30 +77,27 @@ def _build_engine(options: Any) -> Any:
         if value:
             kwargs[paddle_kw] = value
     log.debug("PaddleOCR(classic) kwargs: %s", kwargs)
-    return PaddleOCR(**kwargs)
+    return kwargs
 
 
 def _preprocess_scale(
-    page_result: Any,
+    preprocessed_shape: list[int] | None,
     width: int,
     height: int,
 ) -> tuple[float, float]:
     """Scale factors from PaddleOCR's preprocessed space back to pixels."""
-    prep = page_result.get("doc_preprocessor_res") if hasattr(page_result, "get") else None
-    img = prep.get("output_img") if prep and hasattr(prep, "get") else None
-    shape = getattr(img, "shape", None)
-    if shape is not None and len(shape) >= 2:
-        prep_h, prep_w = int(shape[0]), int(shape[1])
+    if preprocessed_shape is not None:
+        prep_h, prep_w = preprocessed_shape
         if prep_w and prep_h:
             return width / prep_w, height / prep_h
     return 1.0, 1.0
 
 
-def _as_list(value: Any) -> list:
-    """Some PaddleOCR result fields are numpy arrays.
+def _as_list(value: Any) -> list[Any]:
+    """``value`` as a list, empty for None.
 
-    An array with more than one element raises ``ValueError`` in a boolean
-    context, so the fields and their per-line items are tested by length.
+    The worker passes a per-line item of None through as null, and that
+    line falls back to words split from its text.
     """
     return [] if value is None else list(value)
 
@@ -187,22 +153,18 @@ def build_page(input_file: Path, options: Any) -> Page:
         width, height = img.size
 
     log.debug("Running classic PaddleOCR on %s (%dx%d)", input_file, width, height)
-    engine = _get_engine(options)
-    with _PREDICT_LOCK:
-        result = engine.predict(str(input_file), return_word_box=True)
+    result = worker.call(
+        {"op": "classic", "image": str(input_file), "kwargs": engine_kwargs(options)},
+    )
 
     page = Page(width=width, height=height, lang=_resolve_lang(options), ocr_system=OCR_SYSTEM)
-    if not result:
-        return page
+    sx, sy = _preprocess_scale(result.get("preprocessed_shape"), width, height)
 
-    page_result = result[0]
-    sx, sy = _preprocess_scale(page_result, width, height)
-
-    texts = _as_list(page_result.get("rec_texts"))
-    scores = _as_list(page_result.get("rec_scores"))
-    polys = _as_list(page_result.get("rec_polys"))
-    token_lines = _as_list(page_result.get("text_word"))
-    token_boxes = _as_list(page_result.get("text_word_region"))
+    texts = _as_list(result.get("rec_texts"))
+    scores = _as_list(result.get("rec_scores"))
+    polys = _as_list(result.get("rec_polys"))
+    token_lines = _as_list(result.get("text_word"))
+    token_boxes = _as_list(result.get("text_word_region"))
     has_word_boxes = len(token_lines) > 0 and len(token_boxes) > 0
     log.debug("classic: %d regions, word boxes=%s", len(texts), has_word_boxes)
 
