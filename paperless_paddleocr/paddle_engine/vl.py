@@ -196,9 +196,10 @@ def _split_by_gutter(items: list[_Spot], min_gutter: int) -> list[list[_Spot]]:
 
 
 def _spotting_page(spotting: Any, page: Page) -> None:
+    # The worker answers with an error when the two lengths differ.
     items: list[_Spot] = [
         (txt, poly_to_bbox(poly), _poly_baseline_y(poly))
-        for txt, poly in zip(spotting["rec_texts"], spotting["rec_polys"], strict=False)
+        for txt, poly in zip(spotting["rec_texts"], spotting["rec_polys"], strict=True)
         if txt and txt.strip()
     ]
     lines = group_into_lines(items, bbox_of=lambda it: it[1], baseline_of=lambda it: it[2])

@@ -168,7 +168,8 @@ def build_page(input_file: Path, options: Any) -> Page:
     has_word_boxes = bool(token_lines and token_boxes)
     log.debug("classic: %d regions, word boxes=%s", len(texts), has_word_boxes)
 
-    for idx, (text, score, poly) in enumerate(zip(texts, scores, polys, strict=False)):
+    # The worker answers with an error when the three lengths differ.
+    for idx, (text, score, poly) in enumerate(zip(texts, scores, polys, strict=True)):
         if not text:
             continue
         region_box = poly_to_bbox(_scaled(poly, sx, sy))

@@ -166,6 +166,57 @@ def test_classic_result_of_an_unexpected_type_is_an_error(worker, png):
     assert _call(worker, request)["ok"] is False
 
 
+def _raw_classic(request_id: int, png: Path, raw_results: list[Any]) -> dict[str, Any]:
+    kwargs = {"device": "cpu", "raw_results": raw_results}
+    return {"id": request_id, "op": "classic", "image": str(png), "kwargs": kwargs}
+
+
+def test_classic_blank_page_is_an_empty_result(worker, png):
+    # The shape paddleocr 3.7 returns for a page without text.
+    page = {
+        "rec_polys": [],
+        "rec_scores": [],
+        "rec_texts": [],
+        "text_word": [],
+        "text_word_region": [],
+    }
+    assert _call(worker, _raw_classic(23, png, [page]))["result"] == {
+        "rec_polys": [],
+        "rec_scores": [],
+        "rec_texts": [],
+        "text_word": [],
+        "text_word_region": [],
+        "preprocessed_shape": None,
+    }
+
+
+def test_classic_prediction_without_a_page_result_is_an_error(worker, png):
+    message = _call(worker, _raw_classic(24, png, []))["error"]["message"]
+    assert "paddleocr 3.4.0" in message
+
+
+@pytest.mark.parametrize(
+    ("page", "missing"),
+    [
+        ({"rec_scores": [], "rec_texts": []}, "rec_polys"),
+        ({"rec_polys": [], "rec_texts": []}, "rec_scores"),
+        ({"rec_polys": [], "rec_scores": []}, "rec_texts"),
+        ({"rec_polys": [], "rec_scores": [], "rec_texts": None}, "rec_texts"),
+    ],
+)
+def test_classic_page_result_without_a_region_field_is_an_error(worker, png, page, missing):
+    message = _call(worker, _raw_classic(25, png, [page]))["error"]["message"]
+    assert missing in message
+    assert "paddleocr 3.4.0" in message
+
+
+def test_classic_region_fields_of_unequal_length_are_an_error(worker, png):
+    poly = [[0, 0], [40, 0], [40, 10], [0, 10]]
+    page = {"rec_polys": [poly, poly], "rec_scores": [0.9], "rec_texts": ["one", "two"]}
+    message = _call(worker, _raw_classic(26, png, [page]))["error"]["message"]
+    assert "paddleocr 3.4.0" in message
+
+
 def test_classic_reuses_one_engine_per_kwargs(worker, png, construction_log):
     for _ in range(2):
         _call(worker, {"id": 3, "op": "classic", "image": str(png), "kwargs": {"device": "cpu"}})
@@ -224,6 +275,46 @@ def test_vl_pipeline_without_the_version_parameter_runs_in_ocr_mode(spawn_worker
     response = _call(worker, request)
     assert response["ok"] is True, response["error"]["message"]
     assert response["result"]["spotting_capable"] is False
+
+
+def _raw_vl(request_id: int, png: Path, raw_results: list[Any]) -> dict[str, Any]:
+    return {
+        "id": request_id,
+        "op": "vl",
+        "image": str(png),
+        "kwargs": {"device": "cpu", "raw_results": raw_results},
+        "pipeline_version": "v1",
+    }
+
+
+def test_vl_prediction_without_a_page_result_is_an_error(worker, png):
+    message = _call(worker, _raw_vl(27, png, []))["error"]["message"]
+    assert "paddleocr 3.4.0" in message
+
+
+@pytest.mark.parametrize("page", [{"spotting_res": {}}, {"parsing_res_list": None}])
+def test_vl_page_result_without_parsing_res_list_is_an_error(worker, png, page):
+    message = _call(worker, _raw_vl(28, png, [page]))["error"]["message"]
+    assert "parsing_res_list" in message
+    assert "paddleocr 3.4.0" in message
+
+
+def test_vl_empty_spotting_result_gives_the_blocks(worker, png):
+    # The v1 pipeline answers each request with an empty spotting result.
+    block = {"block_label": "ocr", "block_content": "Hi", "block_bbox": [0, 0, 40, 20]}
+    page = {"spotting_res": {}, "parsing_res_list": [block]}
+    assert _call(worker, _raw_vl(29, png, [page]))["result"] == {
+        "spotting_capable": False,
+        "spotting": {"rec_texts": [], "rec_polys": []},
+        "blocks": [{"label": "ocr", "content": "Hi", "bbox": [0, 0, 40, 20]}],
+    }
+
+
+def test_vl_spotting_fields_of_unequal_length_are_an_error(worker, png):
+    page = {"spotting_res": {"rec_texts": ["Hi"]}, "parsing_res_list": []}
+    message = _call(worker, _raw_vl(30, png, [page]))["error"]["message"]
+    assert "rec_polys" in message
+    assert "paddleocr 3.4.0" in message
 
 
 def test_vl_reuses_one_pipeline_per_configuration(worker, png, construction_log):
