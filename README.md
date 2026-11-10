@@ -165,7 +165,9 @@ custom-cont-init.d/
 ```
 
 Mount the folder in the compose file of paperless-ngx, for example `- ./custom-cont-init.d:/custom-cont-init.d:ro`. The
-image runs nothing from it unless the folder and its files belong to root and others cannot write them.
+image runs nothing from it unless the folder and its top-level entries belong to root and others cannot write them. It
+does not look inside `paperless-paddleocr/`, and the script installs the files there as root, so only root should be
+able to write them.
 
 The scripts create the worker venv with the uv of the paperless-ngx image and install uv with pip when the image has
 none. They also hand a model cache volume at `/usr/src/paperless/.paddlex` to the `paperless` user, because a new named
