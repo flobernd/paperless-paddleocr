@@ -102,3 +102,17 @@ def test_render_keeps_one_pixel_for_a_box_past_the_right_edge():
 def test_render_keeps_one_pixel_for_a_box_below_the_bottom_edge():
     page = _page(_line(Word("x", (10, 1601, 20, 1700), 90)), width=1200, height=1600)
     assert 'title="bbox 10 1599 20 1600' in render_hocr(page)
+
+
+def test_render_keeps_the_baseline_of_a_line_clamped_at_the_bottom_edge():
+    # The fitted baseline is at y = 120 - 25 = 95, 5 above the clamped bottom.
+    line = Line(box=(10, 80, 100, 120), confidence=90, text="x", baseline=(0.0, -25.0))
+    hocr = render_hocr(_page(line, height=100))
+    assert 'title="bbox 10 80 100 100; baseline 0.000000 -5;' in hocr
+
+
+def test_render_keeps_the_baseline_of_a_sloped_line_clamped_at_the_left_edge():
+    # At the clamped left edge x = 0 the baseline is at y = 40 - 5 + 0.1 * 20 = 37.
+    line = Line(box=(-20, 10, 80, 40), confidence=90, text="x", baseline=(0.1, -5.0))
+    hocr = render_hocr(_page(line))
+    assert 'title="bbox 0 10 80 40; baseline 0.100000 -3;' in hocr
