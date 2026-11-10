@@ -5,12 +5,25 @@ set for the worker process alone.
 """
 
 import os
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 # Fails the paddle import. FAKE_PADDLE_FAIL_IMPORT fails the paddleocr
 # import.
 if os.environ.get("FAKE_PADDLEPADDLE_FAIL_IMPORT") == "1":
     raise ImportError("No module named 'paddle'")
+
+# The real package fails half-way through its import when it cannot create
+# ~/.cache/paddle. The submodules it loaded before stay in sys.modules, and a
+# second import fails on them with another error.
+if os.environ.get("FAKE_PADDLEPADDLE_FAIL_IMPORT") == "permission":
+    if "paddle.base" in sys.modules:
+        raise AttributeError(
+            "partially initialized module 'paddle' has no attribute 'tensor' "
+            "(most likely due to a circular import)",
+        )
+    sys.modules["paddle.base"] = ModuleType("paddle.base")
+    raise PermissionError(13, "Permission denied", "/home/paperless/.cache/paddle")
 
 # One write from Python and one from native code at import. The native write
 # fails the first response of a worker that imports paddle before it claims

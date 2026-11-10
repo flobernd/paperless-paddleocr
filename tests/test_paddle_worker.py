@@ -115,10 +115,31 @@ def test_ping_reports_missing_paddleocr_as_null(worker_without_paddleocr):
     assert result["paddleocr"] is None
 
 
+def test_ping_reports_why_paddleocr_does_not_import(worker_without_paddleocr):
+    result = _call(worker_without_paddleocr, {"id": 1, "op": "ping"})["result"]
+    assert "No module named 'paddleocr'" in result["paddleocr_error"]
+
+
 def test_ping_reports_missing_paddle_as_null_beside_paddleocr(spawn_worker):
     worker = spawn_worker(FAKE_PADDLEPADDLE_FAIL_IMPORT="1")
     result = _call(worker, {"id": 1, "op": "ping"})["result"]
     assert (result["paddle"], result["paddleocr"]) == (None, "3.4.0")
+
+
+def test_ping_reports_the_first_paddle_import_error(spawn_worker):
+    # The worker imports paddle at its start, so the import of the ping is
+    # the second one, and the fake fails it with an AttributeError.
+    worker = spawn_worker(FAKE_PADDLEPADDLE_FAIL_IMPORT="permission")
+    error = _call(worker, {"id": 1, "op": "ping"})["result"]["paddle_error"]
+    assert "PermissionError" in error
+    assert "/home/paperless/.cache/paddle" in error
+
+
+def test_ping_imports_paddleocr_again_after_a_failed_import(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLE_FAIL_IMPORT="once")
+    _call(worker, {"id": 1, "op": "ping"})
+    result = _call(worker, {"id": 2, "op": "ping"})["result"]
+    assert (result["paddleocr"], result["paddleocr_error"]) == ("3.4.0", None)
 
 
 def test_classic_returns_plain_lists(worker, png):

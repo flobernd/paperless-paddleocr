@@ -27,8 +27,12 @@ Ops:
   image the pipeline detected on, or null).
 * ``orientation`` with ``image``: the top ``label`` and its ``score``.
 * ``ping``: ``cuda_devices``, ``paddle`` and ``paddleocr`` (versions, null
-  when the import fails), ``paddleocr_vl`` (whether ``PaddleOCRVL``
-  imports) and ``python``.
+  when the import fails), ``paddle_error`` and ``paddleocr_error`` (null
+  when the package imports, otherwise the exception class name and message
+  of its first failed import in this worker), ``paddleocr_vl`` (whether
+  ``PaddleOCRVL`` imports) and ``python``. Each ping retries the import of
+  a package that failed before, so a package installed while the worker
+  runs is found.
 * ``vl`` with ``image``, ``kwargs`` (the ``PaddleOCRVL`` constructor
   arguments without ``pipeline_version``) and ``pipeline_version``:
   ``blocks`` (``label``, ``content`` and ``bbox`` of each layout block),
@@ -47,6 +51,7 @@ and points file descriptor 1 and ``sys.stdout`` at stderr.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import inspect
 import json
 import os
@@ -66,6 +71,12 @@ _CLASSIC_FIELDS = ("rec_polys", "rec_scores", "rec_texts", "text_word", "text_wo
 _CLASSIC_ENGINES: dict[str, Any] = {}
 _ORIENTATION_MODELS: dict[str, Any] = {}
 _VL_PIPELINES: dict[str, Any] = {}
+
+# The first failure is kept because a package that fails half-way through
+# its import leaves its loaded submodules in sys.modules, and the next import
+# fails on them with an error that hides the cause, such as paddle's
+# "partially initialized module" after a PermissionError on ~/.cache/paddle.
+_IMPORT_ERRORS: dict[str, str] = {}
 
 
 def _cached(cache: dict[str, Any], key: str, build: Callable[[], Any]) -> Any:
@@ -117,20 +128,36 @@ def _version(module: Any) -> str:
     return str(getattr(module, "__version__", "unknown"))
 
 
+def _import(name: str) -> Any:
+    """The module ``name``, or None when its import raises.
+
+    Any exception counts, because an installed package can fail its import
+    with an error other than ``ImportError``, such as a ``PermissionError``.
+    The traceback goes to stderr, which the parent logs.
+    """
+    try:
+        return importlib.import_module(name)
+    except Exception as exc:
+        traceback.print_exc()
+        _IMPORT_ERRORS.setdefault(name, f"{type(exc).__name__}: {exc}")
+        return None
+
+
 def _ping(request: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "cuda_devices": 0,
         "paddle": None,
+        "paddle_error": None,
         "paddleocr": None,
+        "paddleocr_error": None,
         "paddleocr_vl": False,
         "python": platform.python_version(),
     }
     # An import failure is a result, so the parent can phrase the install
-    # hint. Its traceback goes to stderr, which the parent logs.
-    try:
-        import paddle
-    except ImportError:
-        traceback.print_exc()
+    # hint and name the cause.
+    paddle = _import("paddle")
+    if paddle is None:
+        result["paddle_error"] = _IMPORT_ERRORS["paddle"]
     else:
         result["paddle"] = _version(paddle)
         # The plugin pings for each engine and only classic-gpu needs a
@@ -139,10 +166,9 @@ def _ping(request: dict[str, Any]) -> dict[str, Any]:
             result["cuda_devices"] = int(paddle.device.cuda.device_count())
         except Exception:
             traceback.print_exc()
-    try:
-        import paddleocr
-    except ImportError:
-        traceback.print_exc()
+    paddleocr = _import("paddleocr")
+    if paddleocr is None:
+        result["paddleocr_error"] = _IMPORT_ERRORS["paddleocr"]
     else:
         result["paddleocr"] = _version(paddleocr)
         try:
@@ -329,10 +355,9 @@ def _disable_paddle_signal_handler() -> None:
     signal`` with an empty stack, and the parent logs this process's
     stderr. A paddle that does not import is left to ``ping`` to report.
     """
-    with contextlib.suppress(Exception):
-        import paddle
-
-        if hasattr(paddle, "disable_signal_handler"):
+    paddle = _import("paddle")
+    if paddle is not None and hasattr(paddle, "disable_signal_handler"):
+        with contextlib.suppress(Exception):
             paddle.disable_signal_handler()
 
 

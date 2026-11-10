@@ -489,16 +489,20 @@ def check_options(options: Any) -> None:
     # child's first call warns about a dead worker or hangs on a lock that was
     # held at the fork.
     ping = _ping_worker()
+    # The worker's reason tells a missing package from an installed one that
+    # fails on import, for example on a cache directory it cannot write.
     if ping["paddleocr"] is None:
         raise MissingDependencyError(
-            "PaddleOCR is not installed in the worker interpreter "
-            f"{worker.worker_interpreter()}. Install paddlepaddle and paddleocr there "
+            "PaddleOCR does not import in the worker interpreter "
+            f"{worker.worker_interpreter()}: {ping['paddleocr_error']}\n"
+            "If it is missing, install paddlepaddle and paddleocr there "
             "(see README, Installation).",
         )
     if ping["paddle"] is None:
         raise MissingDependencyError(
-            "PaddlePaddle is not installed in the worker interpreter "
-            f"{worker.worker_interpreter()}. Install paddlepaddle there, or paddlepaddle-gpu "
+            "PaddlePaddle does not import in the worker interpreter "
+            f"{worker.worker_interpreter()}: {ping['paddle_error']}\n"
+            "If it is missing, install paddlepaddle there, or paddlepaddle-gpu "
             "for the classic-gpu engine (see README, Installation).",
         )
 
