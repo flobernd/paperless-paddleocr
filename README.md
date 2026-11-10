@@ -286,8 +286,9 @@ new ref is unchanged, so a rebuild keeps the PaddlePaddle and PaddleOCR versions
 `--no-cache` to resolve them again.
 
 A bootstrap install skips the plugin when a version of it is installed, so a restart of the same container keeps the old
-version. Put the new artifact and the requirement file of the same ref into `paperless-paddleocr/` and recreate the
-container, which starts without the plugin, so the script installs the new artifact.
+version. Replace the artifact and the requirement file in `paperless-paddleocr/` with those of the new ref and recreate
+the container, which starts without the plugin, so the script installs the new artifact. The script installs the first
+artifact it finds, so an older one left beside the new one can be installed again.
 
 The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocrmypdf 17 ignores either keyword if
 `PAPERLESS_OCR_USER_ARGS` still sets it.
