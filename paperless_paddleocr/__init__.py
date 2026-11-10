@@ -16,3 +16,4 @@ STRATEGY_CHOICES: Final[tuple[str, ...]] = ("merge", "winner")
 DEFAULT_STRATEGY: Final[str] = "winner"
 DEFAULT_VL_MODEL_NAME: Final[str] = "PaddleOCR-VL-1.5-0.9B"
 DEFAULT_VL_PIPELINE_VERSION: Final[str] = "v1.5"
+DEFAULT_WORKER_PYTHON: Final[str] = "/opt/paperless-paddleocr/venv/bin/python"
