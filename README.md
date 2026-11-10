@@ -281,6 +281,10 @@ Default: `PaddleOCR-VL-1.5-0.9B`.
 Bearer token for the remote `/v1/*` endpoints. When set, the OpenAI client sends `Authorization: Bearer <token>` on every
 request, and the server (configured via `api-key:` in its `vllm_config.yaml`) rejects unauthenticated traffic.
 
+The engine reads the key from the environment. The parser never passes it as an ocrmypdf option, because paperless-ngx
+logs the ocrmypdf arguments at debug level. A `paddle_vl_api_key` in `PAPERLESS_OCR_USER_ARGS` is dropped with a
+warning.
+
 > [!WARNING]
 > vLLM's `--api-key` only protects `/v1/*` endpoints; other endpoints (`/health`, `/metrics`, `/invocations`) stay unauthenticated.
 > For untrusted networks, put nginx/Caddy in front of the inference server with endpoint allowlisting and TLS.
@@ -325,6 +329,17 @@ Use this to pass native PaddleOCR codes that have no Tesseract analogue:
 > per-page-per-language cost of the multi-language merge.
 
 Default: *unset* (Tesseract codes from `PAPERLESS_OCR_LANGUAGE` are translated automatically).
+
+### `PAPERLESS_REMOTE_OCR_MODE`
+
+With `PAPERLESS_PADDLEOCR_ENGINE=vl-remote` the parser declares itself a remote service, so this paperless-ngx setting
+applies to it. With `classic-cpu` or `classic-gpu` the parser counts as local, so the setting never excludes it. The
+setting exists from paperless-ngx 3.1, and a mode set in the application configuration overrides the variable. The
+default `always` changes nothing. With `workflow_only`, paperless-ngx gives a document that is not marked for remote OCR
+to a local parser. The "Remote OCR" workflow action and the "Use remote OCR" option of "Reprocess" mark a document, and
+the UI shows them only when paperless-ngx's own remote engine (Azure AI) is configured. Without that engine, the REST
+API is the way to mark a document. That engine scores 20 and this plugin 15 by default, so when that engine is
+configured, the plugin needs `PAPERLESS_PADDLEOCR_SCORE` of 20 or more to take a marked document of a type both support.
 
 ## Honoured paperless-ngx settings
 
@@ -402,10 +417,10 @@ PAPERLESS_OCR_USER_ARGS: '{"paddle_det_model_name": "PP-OCRv6_small_det", "paddl
 ```
 
 Named official models are downloaded on first use into `~/.paddlex/official_models/` (mount
-`/usr/src/paperless/.paddlex` as a volume to persist them across container restarts). The
-`paddle_det_model_dir` / `paddle_rec_model_dir` options point at local model directories
-instead - needed only for air-gapped hosts or self-trained models. When a directory is given together with a name, the
-name must match the `Global.model_name` declared in the directory's `inference.yml`.
+`/usr/src/paperless/.paddlex` as a volume to persist them across container restarts). The `paddle_det_model_dir` /
+`paddle_rec_model_dir` options point at local model directories instead - needed only for air-gapped hosts or
+self-trained models. When a directory is given together with a name, the name must match the `Global.model_name`
+declared in the directory's `inference.yml`.
 
 > [!NOTE]
 > As soon as any model name or directory is set, PaddleOCR stops deriving models from the configured language (it

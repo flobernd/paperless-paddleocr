@@ -50,6 +50,13 @@ def test_configured_pipeline_version_is_passed_through():
     assert _CapturingPipeline.last_kwargs["pipeline_version"] == "v1.6"
 
 
+def test_api_key_from_the_environment_reaches_the_pipeline(monkeypatch):
+    # The paperless parser never passes the key as an option.
+    monkeypatch.setenv("PAPERLESS_PADDLEOCR_VL_API_KEY", "sekrit")
+    vl._build_pipeline(_opts(None))
+    assert _CapturingPipeline.last_kwargs.get("vl_rec_api_key") == "sekrit"
+
+
 def test_v1_disables_spotting_prompt():
     pipeline = _CapturingPipeline(pipeline_version="v1")
     assert vl._spotting_capable(pipeline) is False
