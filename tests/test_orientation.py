@@ -1,35 +1,39 @@
-"""get_orientation maps classifier output to ocrmypdf's OrientationConfidence.
+"""get_orientation maps the worker's classifier result to ocrmypdf's OrientationConfidence.
 
-The real classifier needs paddle + a downloaded model; these tests stub the
-model loader and pin the mapping, scaling and failure behaviour.
+The real classifier needs paddle and a downloaded model in the paddle
+worker. These tests replace ``worker.call`` and pin the request, the
+mapping, the scaling and the failure behaviour.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from paperless_paddleocr.paddle_engine import orientation
+from paperless_paddleocr.paddle_engine import orientation, worker
 
 
-@pytest.fixture(autouse=True)
-def _fresh_model_cache():
-    orientation._MODEL = None
-    yield
-    orientation._MODEL = None
+def _answer(monkeypatch: pytest.MonkeyPatch, label: str, score: float) -> list[dict[str, Any]]:
+    requests: list[dict[str, Any]] = []
+
+    def call(request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(request)
+        return {"label": label, "score": score}
+
+    monkeypatch.setattr(worker, "call", call)
+    return requests
 
 
-class _FakeModel:
-    def __init__(self, label: str, score: float) -> None:
-        self._label, self._score = label, score
-
-    def predict(self, path: str) -> list:
-        return [{"label_names": [self._label], "scores": [self._score]}]
+def test_request_names_the_orientation_op_and_the_image_path(monkeypatch):
+    requests = _answer(monkeypatch, "0", 0.9)
+    orientation.get_orientation(Path("page.png"))
+    assert requests == [{"op": "orientation", "image": "page.png"}]
 
 
 def test_confident_rotation_is_reported(monkeypatch):
-    monkeypatch.setattr(orientation, "_load_model", lambda: _FakeModel("90", 0.97))
+    _answer(monkeypatch, "90", 0.97)
     oc = orientation.get_orientation(Path("x.png"))
     assert oc.angle == 90
     assert round(oc.confidence) == 97
@@ -38,15 +42,18 @@ def test_confident_rotation_is_reported(monkeypatch):
 def test_low_probability_is_suppressed(monkeypatch):
     # A 4-way classifier below 0.5 is guessing; paperless's default
     # rotate_pages_threshold (12) would otherwise act on noise.
-    monkeypatch.setattr(orientation, "_load_model", lambda: _FakeModel("180", 0.4))
+    _answer(monkeypatch, "180", 0.4)
     oc = orientation.get_orientation(Path("x.png"))
     assert (oc.angle, oc.confidence) == (0, 0.0)
 
 
-def test_model_failure_degrades_to_no_rotation(monkeypatch):
-    def boom():
-        raise RuntimeError("no paddle here")
+def test_worker_failure_degrades_to_no_rotation_with_a_logged_error(monkeypatch, caplog):
+    def fail(request: dict[str, Any]) -> dict[str, Any]:
+        raise worker.PaddleWorkerError("The paddle worker exited before it answered")
 
-    monkeypatch.setattr(orientation, "_load_model", boom)
+    monkeypatch.setattr(worker, "call", fail)
     oc = orientation.get_orientation(Path("x.png"))
     assert (oc.angle, oc.confidence) == (0, 0.0)
+    assert [(r.name, r.levelname) for r in caplog.records] == [
+        ("paperless.paddleocr.orientation", "ERROR"),
+    ]
