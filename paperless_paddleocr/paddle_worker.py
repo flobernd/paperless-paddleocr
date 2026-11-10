@@ -11,9 +11,14 @@ worker answers each line with one JSON object per line on stdout, in order.
 
 * Request: ``{"id": int, "op": str, ...}`` with the fields of the op.
 * Success: ``{"id": int, "ok": true, "result": {...}}``.
-* Failure: ``{"id": int, "ok": false, "error": {"type": str, "message": str,
-  "traceback": str}}``, where ``type`` is the exception class name, so the
-  parent can tell a paddlex ``DependencyError`` from other failures.
+* Failure: ``{"id": int, "ok": false, "error": {"type": str, "chain": [str],
+  "message": str, "traceback": str}}``. ``type`` is the exception class
+  name. ``chain`` holds the class names of the exception and of each
+  exception before it, the one it was raised from (``__cause__``) or else
+  the one it was raised while handling (``__context__``, unless
+  suppressed), at most 16. paddlex raises a ``RuntimeError`` from its
+  ``DependencyError`` when it creates a pipeline, so the parent looks for
+  that class in ``chain``.
 * A line that is not a JSON object with an ``id`` gets the failure shape
   with ``"id": null``, and the worker goes on with the next line.
 * At stdin EOF the worker exits with status 0.
@@ -302,6 +307,25 @@ _OPS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "vl": _vl,
 }
 
+#: A real chain is a few links long. The bound ends the walk of a chain whose
+#: exceptions cause each other.
+_CHAIN_LIMIT = 16
+
+
+def _chain(exc: BaseException) -> list[str]:
+    """Class names of ``exc`` and of the exceptions before it, ``exc`` first."""
+    names: list[str] = []
+    current: BaseException | None = exc
+    while current is not None and len(names) < _CHAIN_LIMIT:
+        names.append(type(current).__name__)
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__suppress_context__:
+            current = None
+        else:
+            current = current.__context__
+    return names
+
 
 def _respond(line: str) -> str:
     """The response line for one request line."""
@@ -327,6 +351,7 @@ def _respond(line: str) -> str:
             message = "<str() of the exception failed>"
         error = {
             "type": type(exc).__name__,
+            "chain": _chain(exc),
             "message": message,
             "traceback": traceback.format_exc(),
         }

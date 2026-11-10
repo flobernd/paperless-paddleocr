@@ -72,13 +72,24 @@ class PaddleWorkerError(RuntimeError):
     """An error response of the worker, or a worker that failed.
 
     ``error_type`` is the exception class name the worker reported, and empty
-    when the worker itself failed. ``worker_stderr`` holds the last stderr
-    lines of a worker that failed, and is empty for an error response.
+    when the worker itself failed. ``error_chain`` holds the class names of
+    that exception and of each exception before it, as the worker reported
+    them, and is empty when the worker itself failed. ``worker_stderr``
+    holds the last stderr lines of a worker that failed, and is empty for an
+    error response.
     """
 
-    def __init__(self, message: str, *, error_type: str = "", worker_stderr: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str = "",
+        error_chain: tuple[str, ...] = (),
+        worker_stderr: str = "",
+    ) -> None:
         super().__init__(message)
         self.error_type = error_type
+        self.error_chain = error_chain
         self.worker_stderr = worker_stderr
 
 
@@ -241,7 +252,7 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
     """Run ``request`` in the worker and return the result of its response.
 
     Raises ``PaddleWorkerError`` for an error response, with the exception
-    type the worker reported, and for a worker that failed.
+    type and chain the worker reported, and for a worker that failed.
     """
     global _worker
     op = request.get("op")
@@ -277,7 +288,14 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
         return response["result"]
     error = response["error"]
     log.debug("Paddle worker request %d failed:\n%s", request_id, error["traceback"])
-    raise PaddleWorkerError(error["message"], error_type=error["type"])
+    # A line without a chain still names the exception's own class, the first
+    # link of each chain.
+    chain = error.get("chain")
+    raise PaddleWorkerError(
+        error["message"],
+        error_type=error["type"],
+        error_chain=tuple(chain) if isinstance(chain, list) else (error["type"],),
+    )
 
 
 _ping_result: dict[str, Any] | None = None

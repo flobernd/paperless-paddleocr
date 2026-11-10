@@ -60,6 +60,36 @@ def test_error_response_raises_with_the_type(fake_worker_env):
     assert info.value.error_type == "ValueError"
 
 
+def test_error_response_raises_with_the_chain(fake_worker_env, png):
+    # The fake raises a RuntimeError from a DependencyError, as paddlex does.
+    request = {
+        "op": "vl",
+        "image": str(png),
+        "kwargs": {"device": "cpu", "dependency_error": "cause"},
+        "pipeline_version": "v1.5",
+    }
+    with pytest.raises(worker.PaddleWorkerError) as info:
+        worker.call(request)
+    assert info.value.error_chain == ("RuntimeError", "DependencyError")
+
+
+def test_error_response_without_a_chain_raises_the_worker_error(
+    fake_worker_env, monkeypatch, tmp_path
+):
+    script = tmp_path / "chainless_worker.py"
+    script.write_text(
+        "import json, sys\n"
+        "request = json.loads(sys.stdin.readline())\n"
+        "error = {'type': 'RuntimeError', 'message': 'no chain here', 'traceback': ''}\n"
+        "print(json.dumps({'id': request['id'], 'ok': False, 'error': error}), flush=True)\n"
+        "sys.stdin.read()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(worker, "WORKER_SCRIPT", script)
+    with pytest.raises(worker.PaddleWorkerError, match="no chain here"):
+        worker.call({"op": "ping"})
+
+
 def test_crash_raises_with_stderr_and_next_call_respawns(fake_worker_env, png, caplog):
     with pytest.raises(worker.PaddleWorkerError, match="exploded"):
         worker.call(_classic(png, explode=True))

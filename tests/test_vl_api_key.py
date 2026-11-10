@@ -64,7 +64,11 @@ def test_api_key_stays_out_of_the_log_and_the_error(tmp_path, monkeypatch, caplo
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_VL_API_KEY", "secret-api-key")
 
     def call(request):
-        raise worker.PaddleWorkerError("paddlex says no", error_type="DependencyError")
+        raise worker.PaddleWorkerError(
+            "paddlex says no",
+            error_type="RuntimeError",
+            error_chain=("RuntimeError", "DependencyError"),
+        )
 
     monkeypatch.setattr(worker, "call", call)
     png = tmp_path / "page.png"
