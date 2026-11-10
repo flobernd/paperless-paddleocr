@@ -23,6 +23,11 @@ worker answers each line with one JSON object per line on stdout, in order.
   with ``"id": null``, and the worker goes on with the next line.
 * At stdin EOF the worker exits with status 0.
 
+On Linux the worker asks the kernel to kill it with SIGKILL when the thread
+that started it ends, and with ``--parent-pid PID`` it exits at once with
+status 1 when its parent is not ``PID``. A worker started without the
+option, as by hand, skips that check.
+
 Ops:
 
 * ``classic`` with ``image`` and ``kwargs`` (the ``PaddleOCR`` constructor
@@ -64,6 +69,7 @@ and points file descriptor 1 and ``sys.stdout`` at stderr.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import functools
 import importlib
@@ -71,12 +77,16 @@ import inspect
 import json
 import os
 import platform
+import signal
 import sys
 import traceback
 from collections.abc import Callable
 from typing import Any, TextIO
 
 _ORIENTATION_MODEL_NAME = "PP-LCNet_x1_0_doc_ori"
+
+#: The option of prctl(2) from <linux/prctl.h>.
+_PR_SET_PDEATHSIG = 1
 
 #: Classic result fields with one item per text region, which the parent needs.
 _CLASSIC_REGION_FIELDS = ("rec_polys", "rec_scores", "rec_texts")
@@ -425,7 +435,58 @@ def _disable_paddle_signal_handler() -> None:
             paddle.disable_signal_handler()
 
 
+def _die_with_parent() -> bool:
+    """Ask the kernel to send SIGKILL when the thread that started this process ends.
+
+    Returns whether the call succeeded. Only Linux has it.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        # A Python built without libffi has no ctypes, and such a worker runs
+        # on without the signal.
+        import ctypes
+
+        libc = ctypes.CDLL(None)
+        # prctl reads the arguments after the option as unsigned longs.
+        return libc.prctl(_PR_SET_PDEATHSIG, ctypes.c_ulong(signal.SIGKILL)) == 0
+    except Exception:
+        return False
+
+
+def _parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Answer the paddle requests of paperless-paddleocr, one JSON line each."
+    )
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        help="pid of the process that starts the worker. On Linux the worker exits at once "
+        "when that process is not its parent.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    # The signal comes first, so a parent that dies during the slow paddle
+    # import below still takes the worker with it.
+    pdeathsig = _die_with_parent()
+    parent_pid = _parse_arguments().parent_pid
+    # The kernel sends no signal for a parent that died before the prctl
+    # call, so the worker compares its parent with the process that started it.
+    actual_parent = os.getppid()
+    if pdeathsig and parent_pid is not None and actual_parent != parent_pid:
+        message = (
+            f"The paddle worker exits because its parent is process {actual_parent}, not "
+            f"process {parent_pid}. If PAPERLESS_PADDLEOCR_PYTHON names a script, the script "
+            "must start Python with exec.\n"
+        )
+        # After the death of the parent, stderr can be a pipe that nobody
+        # reads. The write bypasses the buffer of sys.stderr, because text
+        # left there would fail the flush at exit and turn status 1 into 120.
+        with contextlib.suppress(OSError):
+            os.write(2, message.encode())
+        return 1
     protocol = _claim_stdout()
     _disable_paddle_signal_handler()
     for line in sys.stdin:
