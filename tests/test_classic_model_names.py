@@ -27,13 +27,10 @@ def test_add_options_registers_model_name_args():
             "PP-OCRv6_small_det",
             "--paddle-rec-model-name",
             "PP-OCRv6_small_rec",
-            "--paddle-cls-model-name",
-            "PP-LCNet_x0_25_textline_ori",
         ]
     )
     assert ns.paddle_det_model_name == "PP-OCRv6_small_det"
     assert ns.paddle_rec_model_name == "PP-OCRv6_small_rec"
-    assert ns.paddle_cls_model_name == "PP-LCNet_x0_25_textline_ori"
 
 
 def test_model_name_args_default_to_none():
@@ -42,7 +39,6 @@ def test_model_name_args_default_to_none():
     ns = parser.parse_args([])
     assert ns.paddle_det_model_name is None
     assert ns.paddle_rec_model_name is None
-    assert ns.paddle_cls_model_name is None
 
 
 class _PaddleOCRStub:
@@ -64,13 +60,11 @@ def test_build_engine_forwards_model_names(monkeypatch):
         _opts(
             paddle_det_model_name="PP-OCRv6_small_det",
             paddle_rec_model_name="PP-OCRv6_small_rec",
-            paddle_cls_model_name="PP-LCNet_x0_25_textline_ori",
         )
     )
     kwargs = _PaddleOCRStub.last_kwargs
     assert kwargs["text_detection_model_name"] == "PP-OCRv6_small_det"
     assert kwargs["text_recognition_model_name"] == "PP-OCRv6_small_rec"
-    assert kwargs["textline_orientation_model_name"] == "PP-LCNet_x0_25_textline_ori"
 
 
 def test_build_engine_omits_unset_model_names(monkeypatch):
@@ -79,4 +73,3 @@ def test_build_engine_omits_unset_model_names(monkeypatch):
     kwargs = _PaddleOCRStub.last_kwargs
     assert "text_detection_model_name" not in kwargs
     assert "text_recognition_model_name" not in kwargs
-    assert "textline_orientation_model_name" not in kwargs

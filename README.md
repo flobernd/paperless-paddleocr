@@ -38,7 +38,7 @@ keeps working, and archive PDFs remain PDF/A.
 | --- | --- | --- | --- | --- |
 | `classic-cpu` (default) | x86_64 CPU | `paddlepaddle` | [`Dockerfile.classic-cpu`](examples/Dockerfile.classic-cpu) | Roughly 1-3 pages/sec on a modern CPU (rough guidance, not a benchmark). No GPU needed. Right default for most deployments. |
 | `classic-gpu` | Local NVIDIA GPU | `paddlepaddle-gpu` | [`Dockerfile.classic-gpu`](examples/Dockerfile.classic-gpu) | Fast classic pipeline accelerated on a local GPU. Same accuracy as CPU, lower latency. |
-| `vl-remote` | Remote NVIDIA host | `paddlepaddle` (CPU layout only) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
+| `vl-remote` | Remote NVIDIA host | `paddlepaddle` (CPU, recognition runs remotely) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
 
 ## Installation
 
@@ -103,8 +103,9 @@ If you really need CUDA 11.8 (older drivers), edit the Dockerfile to swap the cu
 
 #### `vl-remote`
 
-CPU paddle wheel locally (only layout analysis runs on the paperless side), plus a separate `paddleocr-genai-vllm-server`
-container that owns the GPU and serves the VLM.
+CPU paddle wheel locally, plus a separate `paddleocr-genai-vllm-server` container that owns the GPU and serves the VLM.
+The plugin sends each page image to that server and places the words it returns. No layout model runs on the paperless
+side.
 
 ```bash
 docker build \
@@ -211,6 +212,9 @@ On first startup the container will:
 Re-build the custom image with a newer `PLUGIN_REF` and recreate the container. The `paddleocr-genai-vllm-server` sidecar
 (for `vl-remote`) is updated independently by pulling a newer image tag.
 
+The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocrmypdf 17 ignores either keyword if
+`PAPERLESS_OCR_USER_ARGS` still sets it.
+
 ## Notes
 
 > [!NOTE]
@@ -251,8 +255,9 @@ Selects the PaddleOCR engine variant:
 - `classic-gpu` - same CNN pipeline on a local NVIDIA GPU. Requires `paddlepaddle-gpu` installed in the image and a CUDA device
   visible to the container; `check_options` fails fast if either is missing.
 - `vl-remote` - [PaddleOCR-VL-1.5](https://github.com/PaddlePaddle/PaddleOCR), a 0.9 B-parameter VLM served by a sidecar
-  `paddleocr-genai-vllm-server` container. The paperless side still runs the layout-analysis step locally on CPU; only the
-  VLM-recognition step goes remote. Higher accuracy on small fonts, low-DPI scans, and handwritten text.
+  `paddleocr-genai-vllm-server` container. The plugin sends each page image to the server and places the words it
+  returns, and no layout model runs on the paperless side. Higher accuracy on small fonts, low-DPI scans, and
+  handwritten text.
 
 Default: `classic-cpu`.
 
@@ -348,11 +353,11 @@ PaddleOCR uses different language codes from Tesseract and runs a single languag
 1. **Mapping** - `eng` → `en`, `deu` → `german`, `spa` → `es`, `chi_sim` → `ch`, etc.
    Codes without a PaddleOCR 3.x model (for example `heb`) are logged and dropped. The
    full table is in [`paperless_paddleocr/languages.py`](paperless_paddleocr/languages.py).
-2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once per language and
-   combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks the language whose pass
-   has the highest aggregate confidence and uses its words; `merge` runs an NMS over word boxes from every pass and keeps the
-   highest-confidence box per location. Either way, per-page wall time scales linearly with the number of languages because each
-   pass still runs.
+2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once per
+   language and combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks
+   the language whose pass has the highest aggregate confidence and uses its words. `merge` runs an NMS over word boxes
+   from every pass and keeps the highest-confidence box per location. Either way, per-page wall time scales linearly
+   with the number of languages because each pass still runs.
 
 If you need broad multi-script coverage without paying that cost, set `PAPERLESS_PADDLEOCR_LANGUAGE` to one of the bundled
 multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
@@ -398,7 +403,7 @@ PAPERLESS_OCR_USER_ARGS: '{"paddle_det_model_name": "PP-OCRv6_small_det", "paddl
 
 Named official models are downloaded on first use into `~/.paddlex/official_models/` (mount
 `/usr/src/paperless/.paddlex` as a volume to persist them across container restarts). The
-`paddle_det_model_dir` / `paddle_rec_model_dir` / `paddle_cls_model_dir` options point at local model directories
+`paddle_det_model_dir` / `paddle_rec_model_dir` options point at local model directories
 instead - needed only for air-gapped hosts or self-trained models. When a directory is given together with a name, the
 name must match the `Global.model_name` declared in the directory's `inference.yml`.
 

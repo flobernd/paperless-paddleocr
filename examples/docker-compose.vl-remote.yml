@@ -1,6 +1,6 @@
 # Example: paperless-ngx (CPU-only) + PaddleOCR-VL server (GPU) on one host.
-# Layout analysis runs locally inside paperless; VLM recognition is delegated
-# to the paddleocr-vl-server below via PAPERLESS_PADDLEOCR_VL_SERVER_URL.
+# paperless sends each page image to the paddleocr-vl-server below via
+# PAPERLESS_PADDLEOCR_VL_SERVER_URL, and no layout model runs inside paperless.
 #
 # Build + run from the examples/ directory:
 #   docker compose -f docker-compose.vl-remote.yml build
