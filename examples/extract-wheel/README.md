@@ -41,10 +41,10 @@ pip install "paddlepaddle>=3.0"
 pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu
 
 # 2. Install the plugin.
-pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.0"
+pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
 ```
 
-Replace `v0.1.0` with any tag, branch, or commit SHA. Use `master` to
+Replace `v0.1.1` with any tag, branch, or commit SHA. Use `master` to
 track the latest development snapshot.
 
 To upgrade, just re-run the second `pip install` with a newer ref.
@@ -65,7 +65,7 @@ under `/dist`. Build it once and `docker cp` the wheel out:
 docker build \
     -f docker/builder.Dockerfile \
     -t paddleocr-plugin-builder \
-    "https://github.com/flobernd/paperless-paddleocr.git#v0.1.0"
+    "https://github.com/flobernd/paperless-paddleocr.git#v0.1.1"
 
 # 2. Create a throwaway container and copy /dist out.
 docker create --name paddleocr-extract paddleocr-plugin-builder
@@ -86,7 +86,7 @@ Paperless-ngx discovers the plugin through its `paperless_ngx.parsers`
 entry point. Restart the paperless process(es) and confirm in the logs:
 
 ```text
-Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.0
+Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1
     by Florian Bernd (entrypoint: 'paddleocr').
 ```
 
