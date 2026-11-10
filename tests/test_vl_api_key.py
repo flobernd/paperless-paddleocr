@@ -66,7 +66,6 @@ def test_api_key_stays_out_of_the_log_and_the_error(tmp_path, monkeypatch, caplo
     def call(request):
         raise worker.PaddleWorkerError(
             "paddlex says no",
-            error_type="RuntimeError",
             error_chain=("RuntimeError", "DependencyError"),
         )
 
