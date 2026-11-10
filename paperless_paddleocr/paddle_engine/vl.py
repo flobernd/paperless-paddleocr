@@ -317,9 +317,10 @@ def build_page(input_file: Path, options: Any) -> Page:
             },
         )
     except worker.PaddleWorkerError as e:
-        # paddlex raises its own DependencyError when the doc-parser extra is
-        # missing, and the worker reports the exception's class name.
-        if e.error_type == "DependencyError":
+        # paddlex raises its own DependencyError when the doc-parser packages
+        # are missing, and raises a RuntimeError from it when it creates the
+        # pipeline. Its own text does not say which interpreter lacks them.
+        if "DependencyError" in e.error_chain:
             raise RuntimeError(
                 "PaddleOCR-VL dependencies are missing in the worker interpreter "
                 f"{worker.worker_interpreter()}. Install paddle-requirements-vl.txt there "

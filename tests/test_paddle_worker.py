@@ -257,6 +257,34 @@ def test_unknown_op_is_an_error_response(worker):
     assert response["ok"] is False and response["error"]["type"] == "ValueError"
 
 
+def _vl_failing_on_dependencies(request_id: int, how: str, png: Path) -> dict[str, Any]:
+    return {
+        "id": request_id,
+        "op": "vl",
+        "image": str(png),
+        "kwargs": {"device": "cpu", "dependency_error": how},
+        "pipeline_version": "v1.5",
+    }
+
+
+@pytest.mark.parametrize(
+    ("how", "chain"),
+    [
+        ("cause", ["RuntimeError", "DependencyError"]),
+        ("context", ["RuntimeError", "DependencyError"]),
+        ("suppressed", ["RuntimeError"]),
+    ],
+)
+def test_error_response_names_each_exception_the_error_came_from(worker, png, how, chain):
+    error = _call(worker, _vl_failing_on_dependencies(21, how, png))["error"]
+    assert (error["type"], error["chain"]) == ("RuntimeError", chain)
+
+
+def test_error_response_arrives_for_exceptions_that_cause_each_other(worker, png):
+    error = _call(worker, _vl_failing_on_dependencies(22, "cycle", png))["error"]
+    assert error["chain"][:2] == ["RuntimeError", "DependencyError"]
+
+
 def test_exception_that_cannot_be_printed_is_an_error_response(worker, png):
     kwargs = {"device": "cpu", "unprintable_error": True}
     response = _call(worker, {"id": 20, "op": "classic", "image": str(png), "kwargs": kwargs})

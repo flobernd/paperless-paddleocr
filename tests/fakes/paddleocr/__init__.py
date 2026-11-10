@@ -103,9 +103,36 @@ def _require_device():
         raise TypeError("Place(undefined:0)")
 
 
+class DependencyError(Exception):
+    """Stands in for paddlex.utils.deps.DependencyError, which the worker reports by name."""
+
+
+def _fail_on_dependencies(how):
+    # paddlex raises a RuntimeError from its DependencyError when it creates a
+    # pipeline whose packages are missing. The other shapes cover the rest of
+    # the rules by which Python links one exception to the next.
+    message = "A dependency error occurred during pipeline creation."
+    try:
+        raise DependencyError("`PaddleOCR-VL-1.5` requires additional dependencies.")
+    except DependencyError as missing:
+        if how == "cause":
+            raise RuntimeError(message) from missing
+        if how == "context":
+            raise RuntimeError(message)  # noqa: B904
+        if how == "suppressed":
+            raise RuntimeError(message) from None
+        if how == "cycle":
+            error = RuntimeError(message)
+            missing.__cause__ = error
+            raise error from missing
+        raise
+
+
 class PaddleOCRVL:
     def __init__(self, pipeline_version=None, **kwargs):
         _record_construction("PaddleOCRVL")
+        if kwargs.get("dependency_error"):
+            _fail_on_dependencies(kwargs["dependency_error"])
         _require_device()
         self.pipeline_version = pipeline_version
 
