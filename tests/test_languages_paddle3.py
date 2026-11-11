@@ -78,3 +78,4 @@ def test_override_with_a_repeated_code_runs_one_pass():
 def test_override_de_duplication_keeps_the_given_order():
     # The merge strategy labels its hOCR with the first code, and vl-remote runs only the first.
     assert resolve_paddle_languages("eng", "german+en+german") == ["german", "en"]
+    assert resolve_paddle_languages("eng", "en+EN") == ["en"]
