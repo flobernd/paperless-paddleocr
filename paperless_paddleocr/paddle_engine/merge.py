@@ -9,7 +9,6 @@ builds the page of the hOCR from the words that remain.
 
 from __future__ import annotations
 
-import copy
 import logging
 
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
@@ -20,7 +19,6 @@ from paperless_paddleocr.paddle_engine.hocr import (
     Word,
     clamp_box,
     clean_text,
-    order_page,
     words_baseline,
 )
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
@@ -38,18 +36,14 @@ _NMS_BAND_PX = 32
 def page_words(page: Page) -> list[Word]:
     """Every word of ``page`` that has text, in the block order of the single-language hOCR.
 
-    The words come from an ordered copy, so ``page`` keeps the order of its
-    regions: the winning page is ordered at its write, and a second ordering
-    can build other rows from regions that share a bottom edge. The merge
-    sorts stably, so the word order decides its ties. Boxes are clamped to
-    the page and texts cleaned and stripped here, ahead of the merge,
-    because the merged lines derive their boxes, baselines and word spacing
-    from these words.
+    It takes a page that :func:`~paperless_paddleocr.paddle_engine.hocr.order_page`
+    has put in reading order. The merge sorts stably, so the word order
+    decides its ties. Boxes are clamped to the page and texts cleaned and
+    stripped here, ahead of the merge, because the merged lines derive their
+    boxes, baselines and word spacing from these words.
     """
-    ordered = copy.copy(page)
-    order_page(ordered)
     words: list[Word] = []
-    for block in ordered.blocks:
+    for block in page.blocks:
         for line in block.lines:
             for word in line.words:
                 text = clean_text(word.text).strip()
@@ -82,7 +76,7 @@ def merge_page(
 ) -> tuple[Page, str]:
     """The page and the sidecar of the NMS merge, labelled with the first language."""
     flat = [w for words in per_lang_words.values() for w in words]
-    merged = _nms_merge(flat, _NMS_IOU_THRESHOLD)
+    merged = _nms_merge(flat)
     log.debug(
         "merge: %d total words from %d languages → %d after NMS",
         len(flat),
@@ -117,7 +111,7 @@ def _blocks_to_text(blocks: list[list[list[Word]]]) -> str:
     )
 
 
-def _nms_merge(words: list[Word], iou_threshold: float) -> list[Word]:
+def _nms_merge(words: list[Word]) -> list[Word]:
     """Greedy NMS by descending confidence, then re-order for reading.
 
     Surviving words are re-sequenced through :func:`layout.reading_blocks`
@@ -133,7 +127,9 @@ def _nms_merge(words: list[Word], iou_threshold: float) -> list[Word]:
         _x0, y0, _x1, y1 = candidate.box
         touched = range(min(y0, y1) // _NMS_BAND_PX, max(y0, y1) // _NMS_BAND_PX + 1)
         if any(
-            _iou(candidate.box, k.box) >= iou_threshold for b in touched for k in bands.get(b, ())
+            _iou(candidate.box, k.box) >= _NMS_IOU_THRESHOLD
+            for b in touched
+            for k in bands.get(b, ())
         ):
             continue
         kept.append(candidate)
