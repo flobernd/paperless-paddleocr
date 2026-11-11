@@ -52,7 +52,6 @@ import queue
 import subprocess
 import sys
 import threading
-from concurrent.futures import Future
 from pathlib import Path
 from typing import IO, Any
 
@@ -146,57 +145,82 @@ def _follows_protocol(response: dict[str, Any]) -> bool:
 class _Worker:
     """One worker process, with a thread on each of its output pipes.
 
-    A third thread starts the process and lives until :meth:`stop`.
+    A third thread starts the process and ends at :meth:`stop`, which kills
+    and reaps the process first. When the constructor fails after the start,
+    that thread kills and reaps the process itself.
     """
 
     def __init__(self) -> None:
         interpreter = worker_interpreter()
         self._stopped = threading.Event()
-        started: Future[subprocess.Popen[str]] = Future()
+        # A reader thread closes its own pipe when the stream ends, so the
+        # parent thread closes only the pipes not listed here.
+        self._reader_pipes: list[IO[str] | None] = []
+        started: queue.SimpleQueue[subprocess.Popen[str] | BaseException] = queue.SimpleQueue()
         # On Linux the worker dies when the thread that started it ends.
         # ocrmypdf calls from page threads that end with their document, so
-        # the worker starts from a thread of its own.
+        # the worker starts from a thread of its own, which puts the process
+        # or the exception of the start on the queue.
         self._parent_thread = threading.Thread(
             target=self._parent,
             args=(interpreter, started),
             name="paddle-worker-parent",
             daemon=True,
         )
-        self._parent_thread.start()
         try:
-            self.process = started.result()
-        except OSError as exc:
-            raise PaddleWorkerError(f"Cannot start the paddle worker {interpreter}: {exc}") from exc
-        log.debug("Started the paddle worker %s (pid %d)", interpreter, self.process.pid)
-        self._lines: queue.Queue[str | None] = queue.Queue()
-        self._tail: collections.deque[str] = collections.deque(maxlen=_STDERR_LINES)
-        self._tail_lock = threading.Lock()
-        threading.Thread(
-            target=self._read_stdout,
-            args=(self.process.stdout,),
-            name="paddle-worker-stdout",
-            daemon=True,
-        ).start()
-        # The worker sends what paddle prints to stdout to stderr as well, so
-        # a stderr pipe that nobody reads during a request fills up and stalls
-        # the worker.
-        self._stderr_thread = threading.Thread(
-            target=self._forward_stderr,
-            args=(self.process.stderr,),
-            name="paddle-worker-stderr",
-            daemon=True,
-        )
-        self._stderr_thread.start()
+            # Inside the try, so that an exception that interrupts the start
+            # after the thread runs still sets the stop event.
+            self._parent_thread.start()
+            outcome = started.get()
+            if isinstance(outcome, OSError):
+                raise PaddleWorkerError(
+                    f"Cannot start the paddle worker {interpreter}: {outcome}"
+                ) from outcome
+            if isinstance(outcome, BaseException):
+                raise outcome
+            self.process = outcome
+            log.debug("Started the paddle worker %s (pid %d)", interpreter, self.process.pid)
+            self._lines: queue.Queue[str | None] = queue.Queue()
+            self._tail: collections.deque[str] = collections.deque(maxlen=_STDERR_LINES)
+            self._tail_lock = threading.Lock()
+            threading.Thread(
+                target=self._read_stdout,
+                args=(self.process.stdout,),
+                name="paddle-worker-stdout",
+                daemon=True,
+            ).start()
+            self._reader_pipes.append(self.process.stdout)
+            # The worker sends what paddle prints to stdout to stderr as well, so
+            # a stderr pipe that nobody reads during a request fills up and stalls
+            # the worker.
+            self._stderr_thread = threading.Thread(
+                target=self._forward_stderr,
+                args=(self.process.stderr,),
+                name="paddle-worker-stderr",
+                daemon=True,
+            )
+            self._stderr_thread.start()
+            self._reader_pipes.append(self.process.stderr)
+        except BaseException:
+            # The parent thread then kills the process, even one whose start
+            # returns only after this exception.
+            self._stopped.set()
+            raise
 
-    def _parent(self, interpreter: str, started: Future[subprocess.Popen[str]]) -> None:
+    def _parent(
+        self,
+        interpreter: str,
+        started: queue.SimpleQueue[subprocess.Popen[str] | BaseException],
+    ) -> None:
         try:
             # On Linux the worker asks the kernel to kill it when this thread
-            # ends, which happens at stop() or when this process dies, so a
-            # worker in the middle of a request ends with this process too.
-            # Elsewhere the worker exits at the EOF of stdin, which it reads
-            # between requests only, so a busy worker ends once its request
-            # ends. Either way the client needs no signal handler or exit hook
-            # to end it.
+            # ends. stop() kills the worker before this thread ends, the thread
+            # does so itself after a constructor that failed, and the signal
+            # covers the death of this process, so a worker in the middle of a
+            # request ends with this process too. Elsewhere the worker exits at
+            # the EOF of stdin, which it reads between requests only, so a busy
+            # worker ends once its request ends. Either way the client needs no
+            # signal handler or exit hook to end it.
             process = subprocess.Popen(
                 [interpreter, "-P", str(WORKER_SCRIPT), "--parent-pid", str(os.getpid())],
                 stdin=subprocess.PIPE,
@@ -210,11 +234,22 @@ class _Worker:
                 env=worker_environment(),
             )
         except BaseException as exc:
-            # The caller waits for the outcome, so any exception goes there.
-            started.set_exception(exc)
+            # The constructor waits on the queue for the outcome, so any
+            # exception goes there.
+            started.put(exc)
             return
-        started.set_result(process)
+        started.put(process)
         self._stopped.wait()
+        # Only a constructor that failed leaves the process running here,
+        # because stop() kills and reaps it first.
+        process.kill()
+        process.wait()
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe is not None and pipe not in self._reader_pipes:
+                # The process is gone, so a request left in the write buffer
+                # of stdin has nowhere to go.
+                with contextlib.suppress(OSError):
+                    pipe.close()
 
     def _read_stdout(self, stream: IO[str]) -> None:
         try:
@@ -287,11 +322,6 @@ class _Worker:
         # join returns at once.
         self._parent_thread.join()
         self._stderr_thread.join(_STDERR_DRAIN_SECONDS)
-        # The process is gone, so a request left in the write buffer has
-        # nowhere to go.
-        if self.process.stdin is not None:
-            with contextlib.suppress(OSError):
-                self.process.stdin.close()
         with self._tail_lock:
             return "\n".join(self._tail)
 
