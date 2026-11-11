@@ -24,7 +24,8 @@ keeps working, and archive PDFs remain PDF/A.
 
 - Drop-in replacement for the built-in Tesseract OCR pipeline
 - Honours every `PAPERLESS_OCR_*` setting (mode, output type, deskew, rotate, clean, pages, user args, …)
-- Multi-language OCR with two strategies via `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`:
+- Multi-language OCR with one pass for each group of languages that select the same models, and two strategies via
+  `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`:
   - `winner` (default) - pick the highest-aggregate-confidence language per document
   - `merge` - NMS-merge word boxes across languages (right choice for genuinely mixed-script pages)
 - Three engine options:
@@ -412,13 +413,13 @@ Default: `v1.5`.
 
 How to combine results when `PAPERLESS_OCR_LANGUAGE` lists more than one language:
 
-- `winner` (default) - run each language pass, pick the one with the highest aggregate word confidence, and write its
-  page as a run of that language alone writes it. Faster and more consistent for documents whose pages are
-  single-script.
-- `merge` - NMS-merge word boxes from all language passes by confidence. Right choice for genuinely mixed-script pages.
+- `winner` (default) - run each pass, pick the one with the highest aggregate word confidence, and write its page as a
+  run of its language alone writes it. Faster and more consistent for documents whose pages are single-script.
+- `merge` - NMS-merge word boxes from all passes by confidence. Right choice for genuinely mixed-script pages.
 
-The setting has nothing to combine where one pass runs: for a single language, for `vl-remote`, and with a model name or
-directory set (see [Choosing classic-pipeline models](#choosing-classic-pipeline-models)).
+The setting has nothing to combine where one pass runs: for a single language, for `vl-remote`, with a model name or
+directory set (see [Choosing classic-pipeline models](#choosing-classic-pipeline-models)), and for languages that all
+select the same models (see [Language handling](#language-handling)).
 
 Default: `winner`.
 
@@ -435,8 +436,9 @@ Use this to pass native PaddleOCR codes that have no Tesseract analogue:
   multilingual PP-OCRv6 model, the others select the matching script recognition model.
 
 > [!TIP]
-> Setting this to one of the multi-script models is the recommended way to OCR documents that mix scripts without paying the
-> per-page-per-language cost of the multi-language merge.
+> Setting this to one of the multi-script models is the recommended way to OCR documents that mix scripts in one pass.
+> Without a model name or directory, the classic engines run one pass for each group of configured languages that
+> select the same models.
 
 Default: *unset* (Tesseract codes from `PAPERLESS_OCR_LANGUAGE` are translated automatically).
 
@@ -494,7 +496,7 @@ parser uses, then passed to `ocrmypdf.ocr()` exactly the same way:
 
 | Setting | Effect |
 | --- | --- |
-| `PAPERLESS_OCR_LANGUAGE` | Tesseract codes, `+`-separated. Mapped to PaddleOCR codes internally. Multiple codes trigger the multi-language merge. |
+| `PAPERLESS_OCR_LANGUAGE` | Tesseract codes, `+`-separated. Mapped to PaddleOCR codes internally. With multiple codes the plugin runs one pass for each group of languages that select the same models, or a single pass with `vl-remote` or a model name or directory set (see [Language handling](#language-handling)). |
 | `PAPERLESS_OCR_MODE` | `auto` / `force` / `redo` / `off` (`off` skips OCR entirely and just produces PDF/A - no PaddleOCR invoked). |
 | `PAPERLESS_OCR_OUTPUT_TYPE` | `pdf` / `pdfa` / `pdfa-1` / `pdfa-2` / `pdfa-3`. |
 | `PAPERLESS_OCR_CLEAN` | `clean` / `clean-final` / `none`. |
@@ -514,14 +516,18 @@ PaddleOCR uses different language codes from Tesseract and runs a single languag
 1. **Mapping** - `eng` → `en`, `deu` → `german`, `spa` → `es`, `chi_sim` → `ch`, etc.
    Codes without a PaddleOCR 3.x model (for example `heb`) are logged and dropped. The
    full table is in [`paperless_paddleocr/languages.py`](paperless_paddleocr/languages.py).
-2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once per
-   language and combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks
-   the language whose pass has the highest aggregate confidence and writes the page of that pass as a run of that
-   language alone writes it. `merge` runs an NMS over word boxes from every pass and keeps the highest-confidence box
-   per location. Either way, per-page wall time scales linearly with the number of languages. The plugin runs one pass
-   instead, labelled with the first language, with `vl-remote` and with a model name or directory set: the VL model
-   reads every script, and a set model makes PaddleOCR ignore the language. If one language pass fails, the document
-   fails with an error that names the language.
+2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once for
+   each group of languages that select the same detection and recognition models, and the first language of a group
+   labels its page. Under PaddleOCR 3.7, for example, `eng+deu` is one group, since `en` and `german` both select the
+   PP-OCRv6 medium models. Another release can select differently: under PaddleOCR 3.4, `en` and `german` use different
+   recognition models, so `eng+deu` runs two passes. A language whose models the plugin cannot look up, such as `ml`,
+   keeps a pass of its own. With several passes, the plugin combines the results according to
+   `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks the language whose pass has the highest
+   aggregate confidence and writes the page of that pass as a run of that language alone writes it. `merge` runs an NMS
+   over word boxes from every pass and keeps the highest-confidence box per location. Either way, per-page wall time
+   scales linearly with the number of passes. The plugin runs one pass instead, labelled with the first language, with
+   `vl-remote` and with a model name or directory set: the VL model reads every script, and a set model makes PaddleOCR
+   ignore the language. If one language pass fails, the document fails with an error that names the language.
 
 If you need broad multi-script coverage without paying that cost, set `PAPERLESS_PADDLEOCR_LANGUAGE` to one of the bundled
 multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
@@ -534,11 +540,12 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
 
 ## Performance notes
 
-- **Multi-language combination is `N×` slower** than single-language: every pass runs. With `vl-remote` or with a model
-  name or directory set, the plugin runs one pass and labels the page with the first language, at the cost of a
+- **Multi-language combination is `N×` slower** than single-language, where `N` is the number of groups of languages
+  that select the same models (see [Language handling](#language-handling)): every pass runs. With `vl-remote` or with
+  a model name or directory set, the plugin runs one pass and labels the page with the first language, at the cost of a
   single-language run. Use `PAPERLESS_PADDLEOCR_LANGUAGE=ml` for a single-pass multi-script model when accuracy on each
   individual language matters less than throughput. The choice of `winner` vs `merge` doesn't change OCR cost - only
-  how the per-language results are combined afterwards.
+  how the per-pass results are combined afterwards.
 - **`vl-remote` engine** is much more accurate on small fonts, low-DPI scans, and handwritten text - but it requires a separate
   GPU host running `paddleocr-genai-vllm-server`. Per-page latency depends on the server GPU; expect tens of seconds per page
   depending on the GPU.

@@ -55,6 +55,9 @@ class PaddleOCR:
             raise SystemExit(1)
         self.kwargs = kwargs
 
+    def _get_ocr_model_names(self, lang, ppocr_version):
+        return ("det-b", "rec-b") if lang == "ru" else ("det-a", "rec-a")
+
     def predict(self, image, return_word_box=False):
         if self.kwargs.get("unexpected_result"):
             return ["not a page result"]
@@ -99,6 +102,20 @@ class PaddleOCR:
                 ],
             ]
         return [result]
+
+
+# A paddleocr release without the private method that the models op reads.
+if os.environ.get("FAKE_PADDLEOCR_NO_MODEL_SELECTION") == "1":
+    del PaddleOCR._get_ocr_model_names
+
+# A release whose method reads the state of a built instance, which the models
+# op does not pass, so its call raises AttributeError.
+if os.environ.get("FAKE_PADDLEOCR_MODEL_SELECTION_RAISES") == "1":
+
+    def _models_of_a_built_instance(self, lang, ppocr_version):
+        return self.kwargs["models"]
+
+    PaddleOCR._get_ocr_model_names = _models_of_a_built_instance
 
 
 class _VLBlock:

@@ -10,6 +10,7 @@ back to the original pixel dimensions before they reach the hOCR.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,22 @@ def _resolve_lang(options: Any) -> str:
     return first_paddle_lang(getattr(options, "languages", None))
 
 
+def _pass_lang(languages: Iterable[str] | None) -> str | None:
+    """The ``lang`` that a pass for ``languages`` sends to PaddleOCR, or None to send none."""
+    return normalize_paddle_lang(first_paddle_lang(languages))
+
+
+def selected_models(languages: Sequence[str]) -> list[tuple[str, str] | None]:
+    """The detection and recognition models PaddleOCR selects for each language.
+
+    Each entry is None where the worker cannot tell. A language is asked in
+    the form its pass sends, so a Tesseract code from the user arguments
+    gets the selection of its PaddleOCR code.
+    """
+    request = {"op": "models", "languages": [_pass_lang([language]) for language in languages]}
+    return [None if pair is None else (pair[0], pair[1]) for pair in worker.call(request)["models"]]
+
+
 def _resolve_device(options: Any) -> str:
     """PaddleOCR ``device=`` value for the requested classic variant.
 
@@ -79,7 +96,7 @@ def engine_kwargs(options: Any) -> dict[str, Any]:
         "use_doc_unwarping": False,
         "use_doc_orientation_classify": False,
     }
-    lang = normalize_paddle_lang(_resolve_lang(options))
+    lang = _pass_lang(getattr(options, "languages", None))
     if lang is not None:
         kwargs["lang"] = lang
     if device == "cpu":

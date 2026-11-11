@@ -16,10 +16,28 @@ import pytest
 from PIL import Image
 
 from paperless_paddleocr import ocrmypdf_plugin
-from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl
+from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl, worker
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
 from paperless_paddleocr.paddle_engine.merge import _merged_page
+
+
+@pytest.fixture(autouse=True)
+def _no_model_answer(monkeypatch):
+    _models(monkeypatch, {})
+
+
+def _models(monkeypatch, models: dict[str, list[str]]) -> None:
+    """Answer the op ``models`` from ``models``, with null for a language it lacks."""
+
+    def call(request: dict[str, Any]) -> dict[str, Any]:
+        # Another op fails as it does in the worker, so a rename on one side
+        # of the wire fails these tests.
+        if request["op"] != "models":
+            raise worker.PaddleWorkerError(f"unknown op {request['op']!r}")
+        return {"models": [models.get(lang) for lang in request["languages"]]}
+
+    monkeypatch.setattr(worker, "call", call)
 
 
 def _merged_hocr(words: list[Word], hocr_lang: str) -> Page:
@@ -186,6 +204,27 @@ def test_model_option_runs_a_single_pass_for_multiple_languages(tmp_path, monkey
 def test_empty_model_option_keeps_one_pass_per_language(tmp_path, monkeypatch):
     passes = _passes(tmp_path, monkeypatch, "classic-cpu", paddle_rec_model_name="")
     assert passes == ["en", "german"]
+
+
+def test_each_group_gets_one_pass_by_its_first_language_in_configured_order(tmp_path, monkeypatch):
+    # The groups share the detection model, as the PP-OCRv5 languages do, and the first group's
+    # pair sorts after the second's, so passes ordered by their models start with ru.
+    models = {"en": ["z-det", "z-rec"], "german": ["z-det", "z-rec"], "ru": ["z-det", "a-rec"]}
+    _models(monkeypatch, models)
+    passes = _passes(tmp_path, monkeypatch, "classic-cpu", languages=["en", "german", "ru"])
+    assert passes == ["en", "ru"]
+
+
+def test_language_without_a_models_answer_keeps_its_own_pass(tmp_path, monkeypatch):
+    models = {"en": ["z-det", "z-rec"], "german": ["z-det", "z-rec"], "ru": ["z-det", "a-rec"]}
+    _models(monkeypatch, models)
+    passes = _passes(tmp_path, monkeypatch, "classic-cpu", languages=["en", "fr", "german", "ru"])
+    assert passes == ["en", "fr", "ru"]
+
+
+def test_tesseract_codes_are_grouped_by_the_code_that_the_pass_sends(tmp_path, monkeypatch):
+    _models(monkeypatch, {"en": ["z-det", "z-rec"], "german": ["z-det", "z-rec"]})
+    assert _passes(tmp_path, monkeypatch, "classic-cpu", languages=["eng", "deu"]) == ["eng"]
 
 
 def _spaced_page(lang: str) -> Page:
