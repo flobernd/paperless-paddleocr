@@ -45,7 +45,7 @@ def _pass_languages(options: Any) -> list[str]:
     langs = list(getattr(options, "languages", None) or [])
     if len(langs) <= 1:
         return langs
-    if getattr(options, "paddle_engine", "") == "vl-remote":
+    if _variant(options) == "vl-remote":
         # The VL recognition model reads every script in one pass, and the
         # language code only labels the hOCR. N per-language passes would
         # send the same slow remote request (tens of seconds per page) N
@@ -82,6 +82,38 @@ def _pass_languages(options: Any) -> list[str]:
             "+".join(langs),
         )
     return kept
+
+
+def _combined_page(input_file: Path, options: Any, langs: list[str]) -> tuple[Page, str]:
+    """The page and the sidecar of one pass per language, combined by the strategy option."""
+    strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
+    log.info(
+        "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
+        input_file,
+        len(langs),
+        "+".join(langs),
+        strategy,
+    )
+
+    pages: dict[str, tuple[Page, str]] = {}
+    per_lang_words: dict[str, list[Word]] = {}
+    for lang in langs:
+        sub_options = copy.copy(options)
+        sub_options.languages = [lang]
+        try:
+            page = PaddleOCREngine.build_page(input_file, sub_options)
+        except Exception as e:
+            raise RuntimeError(
+                f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
+            ) from e
+        pages[lang] = (page, order_page(page))
+        per_lang_words[lang] = merge.page_words(page)
+
+    if strategy == "winner":
+        return pages[merge.winner(per_lang_words)]
+    # The adapters size each page from the input image, so any pass gives the
+    # page size.
+    return merge.merge_page(per_lang_words, page.width, page.height)
 
 
 class PaddleOCREngine(OcrEngine):
@@ -167,39 +199,10 @@ class PaddleOCREngine(OcrEngine):
         langs = _pass_languages(options)
         if len(langs) <= 1:
             page = PaddleOCREngine.build_page(input_file, options)
+            sidecar = order_page(page)
         else:
-            strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
-            log.info(
-                "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
-                input_file,
-                len(langs),
-                "+".join(langs),
-                strategy,
-            )
-
-            pages: dict[str, Page] = {}
-            per_lang_words: dict[str, list[Word]] = {}
-            for lang in langs:
-                sub_options = copy.copy(options)
-                sub_options.languages = [lang]
-                try:
-                    page = PaddleOCREngine.build_page(input_file, sub_options)
-                except Exception as e:
-                    raise RuntimeError(
-                        f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
-                    ) from e
-                pages[lang] = page
-                per_lang_words[lang] = merge.page_words(page)
-
-            if strategy == "winner":
-                page = pages[merge.winner(per_lang_words)]
-            else:
-                # The adapters size each page from the input image, so any pass
-                # gives the page size.
-                merged, sidecar = merge.merge_page(per_lang_words, page.width, page.height)
-                write_document(merged, output_hocr, output_text, sidecar=sidecar)
-                return
-        write_document(page, output_hocr, output_text, sidecar=order_page(page))
+            page, sidecar = _combined_page(input_file, options, langs)
+        write_document(page, output_hocr, output_text, sidecar=sidecar)
 
     @staticmethod
     def generate_pdf(
