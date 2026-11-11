@@ -127,7 +127,7 @@ def _orientation_model() -> Any:
 
 
 @functools.cache
-def _vl_pipeline(config_json: str) -> Any:
+def _vl_pipeline(kwargs_json: str) -> Any:
     import paddle
     from paddleocr import PaddleOCRVL
 
@@ -136,10 +136,7 @@ def _vl_pipeline(config_json: str) -> Any:
     # TypeError on Place(undefined:0). Recognition runs on the remote
     # server, so pinning CPU first costs nothing.
     paddle.set_device("cpu")
-    config = json.loads(config_json)
-    pipeline_kwargs = dict(config["kwargs"])
-    pipeline_kwargs["pipeline_version"] = config["pipeline_version"]
-    return PaddleOCRVL(**pipeline_kwargs)
+    return PaddleOCRVL(**json.loads(kwargs_json))
 
 
 def _json_default(value: Any) -> Any:
@@ -210,6 +207,10 @@ def _error_text(exc: BaseException) -> str:
         return "<str() of the exception failed>"
 
 
+def _describe(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {_error_text(exc)}"
+
+
 def _import(name: str) -> Any:
     """The module ``name``, or None when its import raises.
 
@@ -221,7 +222,7 @@ def _import(name: str) -> Any:
         return importlib.import_module(name)
     except Exception as exc:
         traceback.print_exc()
-        _IMPORT_ERRORS.setdefault(name, f"{type(exc).__name__}: {_error_text(exc)}")
+        _IMPORT_ERRORS.setdefault(name, _describe(exc))
         return None
 
 
@@ -248,7 +249,7 @@ def _ping(request: dict[str, Any]) -> dict[str, Any]:
             result["cuda_devices"] = int(paddle.device.cuda.device_count())
         except Exception as exc:
             traceback.print_exc()
-            result["cuda_error"] = f"{type(exc).__name__}: {_error_text(exc)}"
+            result["cuda_error"] = _describe(exc)
     paddleocr = _import("paddleocr")
     if paddleocr is None:
         result["paddleocr_error"] = _IMPORT_ERRORS["paddleocr"]
@@ -317,8 +318,8 @@ def _vl_block(block: Any, *, check_shape: bool) -> dict[str, Any]:
 
 
 def _vl(request: dict[str, Any]) -> dict[str, Any]:
-    config = {"kwargs": request["kwargs"], "pipeline_version": request["pipeline_version"]}
-    pipeline = _vl_pipeline(json.dumps(config, sort_keys=True))
+    kwargs = {**request["kwargs"], "pipeline_version": request["pipeline_version"]}
+    pipeline = _vl_pipeline(json.dumps(kwargs, sort_keys=True))
     spotting_capable = _spotting_capable(pipeline)
     page = _page_result(
         pipeline.predict(
