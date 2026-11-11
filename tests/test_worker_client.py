@@ -280,6 +280,65 @@ def test_missing_interpreter_is_a_worker_error(fake_worker_env, monkeypatch, tmp
         worker.call({"op": "ping"})
 
 
+def test_worker_start_that_fails_after_the_process_started_leaves_no_process(
+    fake_worker_env, monkeypatch
+):
+    started: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+    real_start = threading.Thread.start
+
+    def popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        started.append(real_popen(*args, **kwargs))
+        return started[-1]
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "paddle-worker-stdout":
+            raise RuntimeError("can't start new thread")
+        real_start(thread)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    try:
+        with pytest.raises(RuntimeError, match="can't start new thread"):
+            worker.call({"op": "ping"})
+        assert started[0].wait(timeout=10) == -signal.SIGKILL
+    finally:
+        for process in started:
+            process.kill()
+
+
+def test_worker_start_interrupted_after_the_parent_thread_runs_leaves_no_process(
+    fake_worker_env, monkeypatch
+):
+    started: list[subprocess.Popen[str]] = []
+    spawned = threading.Event()
+    real_popen = subprocess.Popen
+    real_start = threading.Thread.start
+
+    def popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        started.append(real_popen(*args, **kwargs))
+        spawned.set()
+        return started[-1]
+
+    def start(thread: threading.Thread) -> None:
+        real_start(thread)
+        if thread.name == "paddle-worker-parent":
+            raise RuntimeError("interrupted after the start")
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    try:
+        with pytest.raises(RuntimeError, match="interrupted after the start"):
+            worker.call({"op": "ping"})
+        # The parent thread can start the process after the exception has
+        # reached the caller.
+        assert spawned.wait(timeout=10)
+        assert started[0].wait(timeout=10) == -signal.SIGKILL
+    finally:
+        for process in started:
+            process.kill()
+
+
 def test_worker_started_from_a_thread_that_ended_keeps_its_models(
     fake_worker_env, monkeypatch, png, tmp_path
 ):
