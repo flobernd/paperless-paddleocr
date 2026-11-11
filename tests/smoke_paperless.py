@@ -19,7 +19,9 @@ lightweight unit suite cannot:
   environment, keep the user args' precedence and never carry the API key
 * one page goes through the paddle worker: the classic-cpu engine reads its
   text and tags the archive, and the vl-remote engine fails the document
-  when its server does not answer.
+  when its server does not answer
+* with the vl-remote engine the parser declares itself a remote service, and
+  the registry gives a PDF to it only while remote parsers are allowed.
 
 The document run needs a worker venv, as the recipes and ``setup.sh``
 install it.
@@ -197,12 +199,15 @@ def _make_test_page() -> ModuleType:
 
 def check_document_run() -> None:
     # Runs after django.setup() in check_parser_imports.
+    import inspect
     import os
     import tempfile
     from unittest import mock
 
     import pikepdf
     from documents.parsers import ParseError
+    from paperless.parsers.registry import get_parser_registry, reset_parser_registry
+    from paperless.version import __version__ as host_version
 
     import paperless_paddleocr.parser as parser_module
 
@@ -237,6 +242,29 @@ def check_document_run() -> None:
                 parser_class = importlib.reload(parser_module).PaperlessPaddleParser
                 if parser_class.uses_remote_service is not True:
                     _fail("uses_remote_service is not True for the vl-remote engine")
+                # A registry built before the reload holds the class of the old module.
+                reset_parser_registry()
+                registry = get_parser_registry()
+                if registry.get_parser_for_file("application/pdf", "doc.pdf") is not parser_class:
+                    _fail("the registry does not give a PDF to the vl-remote parser")
+                # paperless-ngx 3.0 predates the allow_remote keyword, so only 3.0 skips
+                # the second query. A later release without it fails, or the run against
+                # :latest would stop checking the flag once upstream drops or renames it.
+                if "allow_remote" in inspect.signature(registry.get_parser_for_file).parameters:
+                    local = registry.get_parser_for_file(
+                        "application/pdf", "doc.pdf", allow_remote=False
+                    )
+                    if local is parser_class:
+                        _fail(
+                            "the registry gives a PDF to the vl-remote parser "
+                            "without remote parsers"
+                        )
+                elif host_version[:2] != (3, 0):
+                    _fail(
+                        f"the registry of paperless-ngx {'.'.join(map(str, host_version))} has no "
+                        "allow_remote keyword, so the check cannot ask it to leave out "
+                        "remote parsers"
+                    )
                 with parser_class() as parser:
                     try:
                         parser.parse(png, "image/png")
@@ -249,6 +277,7 @@ def check_document_run() -> None:
         finally:
             # Later code sees the module of the restored environment.
             importlib.reload(parser_module)
+            reset_parser_registry()
         _ok(f"vl-remote fails the document without a server: {error.splitlines()[0]}")
 
 
