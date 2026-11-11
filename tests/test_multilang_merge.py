@@ -41,7 +41,7 @@ def _models(monkeypatch, models: dict[str, list[str]]) -> None:
 
 
 def _merged_hocr(words: list[Word], hocr_lang: str) -> Page:
-    """The page a base pass would build for ``words`` on a 200x100 image."""
+    """The page that ``_merged_page`` builds for ``words`` on a 200x100 image."""
     return _merged_page(
         reading_blocks(words, bbox_of=lambda w: w.box), 200, 100, hocr_lang=hocr_lang
     )

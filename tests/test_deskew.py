@@ -1,7 +1,9 @@
 """estimate_skew must recover small page rotations from text-line structure.
 
-Synthetic pages use horizontal black bars as text-line stand-ins; the
-projection-profile score peaks when the bars are horizontal again.
+Synthetic pages use horizontal bars as text-line stand-ins, and the
+projection-profile score peaks when the bars are horizontal again. The bars
+are black, except on one page where they are gray under light that fades
+toward the right edge, as on an unevenly lit scan. One page is blank.
 """
 
 from __future__ import annotations
