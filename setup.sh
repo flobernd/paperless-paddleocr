@@ -66,6 +66,15 @@ WORKER_PY="${WORKER_DIR}/venv/bin/python"
 # that runs the Celery workers cannot traverse.
 export UV_PYTHON_INSTALL_DIR="${WORKER_DIR}/python"
 
+# Whether the worker venv holds the distribution $1. The check reads the
+# distribution metadata and imports no paddle, so a GPU wheel that fails its
+# import still counts and does not get the CPU wheel over it.
+worker_has() {
+    [ -x "${WORKER_PY}" ] && "${WORKER_PY}" -c \
+        'import importlib.metadata, sys; importlib.metadata.distribution(sys.argv[1])' \
+        "$1" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Native libraries (required by PaddleOCR's OpenCV backend)
 # ---------------------------------------------------------------------------
@@ -93,12 +102,23 @@ fi
 
 # ---------------------------------------------------------------------------
 # Worker venv. PaddlePaddle supports no Python newer than 3.13, and the
-# paperless-ngx 3.1 and later images run 3.14. A venv that already imports
-# paddleocr is kept as it is, so this CPU script run on top of an image
-# baked with paddlepaddle-gpu does not clobber the GPU wheel.
+# paperless-ngx 3.1 and later images run 3.14. A venv that holds paddleocr
+# and a paddle wheel is kept as it is, so this CPU script run on top of an
+# image baked with paddlepaddle-gpu does not put the CPU wheel over the GPU
+# wheel. paddleocr imports without paddle, so the check also reads the
+# distribution metadata of the paddle wheels. A venv with paddlepaddle-gpu
+# whose paddleocr does not import stops the script, because the install
+# below would put the CPU wheel over the GPU wheel.
 # ---------------------------------------------------------------------------
-if [ -x "${WORKER_PY}" ] && "${WORKER_PY}" -c "import paddleocr" >/dev/null 2>&1; then
-    echo "Worker venv already imports paddleocr - skipping"
+if [ -x "${WORKER_PY}" ] && "${WORKER_PY}" -c "import paddleocr" >/dev/null 2>&1 \
+    && { worker_has paddlepaddle || worker_has paddlepaddle-gpu; }; then
+    echo "Worker venv already holds paddleocr and a paddle wheel - skipping"
+elif worker_has paddlepaddle-gpu; then
+    echo "ERROR: paddlepaddle-gpu is installed in the worker venv, and paddleocr does not import there." >&2
+    echo "       Refusing to install paddlepaddle (CPU) on top of the GPU wheel." >&2
+    echo "       Use setup-gpu.sh instead of setup.sh for a venv that holds the GPU wheel." >&2
+    echo "       Or uninstall the GPU wheel first:  uv pip uninstall --python ${WORKER_PY} paddlepaddle-gpu" >&2
+    exit 1
 else
     if [ ! -f "${REQUIREMENTS}" ]; then
         echo "ERROR: ${REQUIREMENTS} not found." >&2
