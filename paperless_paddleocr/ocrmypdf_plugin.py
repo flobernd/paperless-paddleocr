@@ -494,9 +494,15 @@ def check_options(options: Any) -> None:
     # The worker's reason tells a missing package from an installed one that
     # fails on import, for example on a cache directory it cannot write.
     if ping["paddleocr"] is None:
+        paddle_line = (
+            f"PaddlePaddle does not import either: {ping['paddle_error']}\n"
+            if ping["paddle"] is None
+            else ""
+        )
         raise MissingDependencyError(
             "PaddleOCR does not import in the worker interpreter "
             f"{worker.worker_interpreter()}: {ping['paddleocr_error']}\n"
+            + paddle_line
             + _install_hint(
                 "If it is missing, install paddlepaddle and paddleocr there "
                 "(see README, Installation).",
@@ -515,9 +521,10 @@ def check_options(options: Any) -> None:
     if engine == "vl-remote":
         if not ping["paddleocr_vl"]:
             raise MissingDependencyError(
-                "PaddleOCR-VL is not available: the paddleocr in the worker interpreter "
-                f"{worker.worker_interpreter()} has no PaddleOCRVL. Upgrade it there with "
-                f'"{VL_REQUIREMENT}" (see README, Troubleshooting).',
+                f"PaddleOCR-VL is not available: paddleocr {ping['paddleocr']} in the worker "
+                f"interpreter {worker.worker_interpreter()} is older than the vl-remote engine "
+                f'supports. Upgrade it there with "{VL_REQUIREMENT}" (see README, '
+                "Troubleshooting).",
             )
         server_url = (getattr(options, "paddle_vl_server_url", "") or "").strip()
         if not server_url:
@@ -529,6 +536,12 @@ def check_options(options: Any) -> None:
         _probe_vl_server(server_url, resolve_vl_api_key(options))
         return
 
+    if engine == "classic-gpu" and ping["cuda_error"] is not None:
+        raise MissingDependencyError(
+            f"classic-gpu engine could not query CUDA devices: {ping['cuda_error']}. "
+            "Verify paddlepaddle-gpu is installed and the host NVIDIA driver is reachable "
+            "from inside the container.",
+        )
     # paddlepaddle-gpu reports 0 devices when the host has no NVIDIA
     # driver or when nvidia-container-toolkit isn't wired up - fail
     # fast rather than crashing inside predict().

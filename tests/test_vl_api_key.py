@@ -37,7 +37,6 @@ def test_preflight_sends_the_key_from_the_environment(monkeypatch):
             "paddle": "3.2.1",
             "paddleocr": "3.4.0",
             "paddleocr_vl": True,
-            "python": "3.13.5",
         },
     )
     sent: list[str | None] = []

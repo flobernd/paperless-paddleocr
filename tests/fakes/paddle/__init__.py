@@ -58,6 +58,10 @@ def disable_signal_handler():
     pass
 
 
-device = SimpleNamespace(
-    cuda=SimpleNamespace(device_count=lambda: int(os.environ.get("FAKE_CUDA_DEVICES", "0"))),
-)
+def _device_count():
+    if "FAKE_CUDA_QUERY_ERROR" in os.environ:
+        raise RuntimeError(os.environ["FAKE_CUDA_QUERY_ERROR"])
+    return int(os.environ.get("FAKE_CUDA_DEVICES", "0"))
+
+
+device = SimpleNamespace(cuda=SimpleNamespace(device_count=_device_count))

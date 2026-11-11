@@ -11,14 +11,13 @@ worker answers each line with one JSON object per line on stdout, in order.
 
 * Request: ``{"id": int, "op": str, ...}`` with the fields of the op.
 * Success: ``{"id": int, "ok": true, "result": {...}}``.
-* Failure: ``{"id": int, "ok": false, "error": {"type": str, "chain": [str],
-  "message": str, "traceback": str}}``. ``type`` is the exception class
-  name. ``chain`` holds the class names of the exception and of each
-  exception before it, the one it was raised from (``__cause__``) or else
-  the one it was raised while handling (``__context__``, unless
-  suppressed), at most 16. paddlex raises a ``RuntimeError`` from its
-  ``DependencyError`` when it creates a pipeline, so the parent looks for
-  that class in ``chain``.
+* Failure: ``{"id": int, "ok": false, "error": {"chain": [str],
+  "message": str, "traceback": str}}``. ``chain`` holds the class names of
+  the exception and of each exception before it, the one it was raised
+  from (``__cause__``) or else the one it was raised while handling
+  (``__context__``, unless suppressed), at most 16. paddlex raises a
+  ``RuntimeError`` from its ``DependencyError`` when it creates a
+  pipeline, so the parent looks for that class in ``chain``.
 * A line that is not a JSON object with an ``id`` gets the failure shape
   with ``"id": null``, and the worker goes on with the next line.
 * At stdin EOF the worker exits with status 0.
@@ -37,13 +36,15 @@ Ops:
   ``preprocessed_shape`` (``[h, w]`` of the image the pipeline detected on,
   or null).
 * ``orientation`` with ``image``: the top ``label`` and its ``score``.
-* ``ping``: ``cuda_devices``, ``paddle`` and ``paddleocr`` (versions, null
-  when the import fails), ``paddle_error`` and ``paddleocr_error`` (null
-  when the package imports, otherwise the exception class name and message
-  of its first failed import in this worker), ``paddleocr_vl`` (whether
-  ``PaddleOCRVL`` imports) and ``python``. Each ping retries the import of
-  a package that failed before, so a package installed while the worker
-  runs is found.
+* ``ping``: ``cuda_devices``, ``cuda_error`` (null when the query succeeds
+  or paddle does not import, otherwise the exception class name and
+  message of the failed query), ``paddle`` and ``paddleocr`` (versions,
+  null when the import fails), ``paddle_error`` and ``paddleocr_error``
+  (null when the package imports, otherwise the exception class name and
+  message of its first failed import in this worker) and ``paddleocr_vl``
+  (whether ``PaddleOCRVL`` imports and its constructor takes
+  ``pipeline_version``). Each ping retries the import of a package that
+  failed before, so a package installed while the worker runs is found.
 * ``vl`` with ``image``, ``kwargs`` (the ``PaddleOCRVL`` constructor
   arguments without ``pipeline_version``) and ``pipeline_version``:
   ``blocks`` (``label``, ``content`` and ``bbox`` of each layout block),
@@ -78,7 +79,6 @@ import importlib
 import inspect
 import json
 import os
-import platform
 import signal
 import sys
 import traceback
@@ -134,10 +134,7 @@ def _vl_pipeline(config_json: str) -> Any:
     paddle.set_device("cpu")
     config = json.loads(config_json)
     pipeline_kwargs = dict(config["kwargs"])
-    # Older paddleocr releases lack the parameter and run their only
-    # pipeline, which has no word spotting.
-    if "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters:
-        pipeline_kwargs["pipeline_version"] = config["pipeline_version"]
+    pipeline_kwargs["pipeline_version"] = config["pipeline_version"]
     return PaddleOCRVL(**pipeline_kwargs)
 
 
@@ -218,12 +215,12 @@ def _import(name: str) -> Any:
 def _ping(request: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "cuda_devices": 0,
+        "cuda_error": None,
         "paddle": None,
         "paddle_error": None,
         "paddleocr": None,
         "paddleocr_error": None,
         "paddleocr_vl": False,
-        "python": platform.python_version(),
     }
     # An import failure is a result, so the parent can phrase the install
     # hint and name the cause.
@@ -233,22 +230,25 @@ def _ping(request: dict[str, Any]) -> dict[str, Any]:
     else:
         result["paddle"] = _version(paddle)
         # The plugin pings for each engine and only classic-gpu needs a
-        # device, so a failed query counts as no device.
+        # device, so a failed query is a result and not an error response.
         try:
             result["cuda_devices"] = int(paddle.device.cuda.device_count())
-        except Exception:
+        except Exception as exc:
             traceback.print_exc()
+            result["cuda_error"] = f"{type(exc).__name__}: {exc}"
     paddleocr = _import("paddleocr")
     if paddleocr is None:
         result["paddleocr_error"] = _IMPORT_ERRORS["paddleocr"]
     else:
         result["paddleocr"] = _version(paddleocr)
         try:
-            from paddleocr import PaddleOCRVL  # noqa: F401
+            from paddleocr import PaddleOCRVL
         except ImportError:
             pass
         else:
-            result["paddleocr_vl"] = True
+            result["paddleocr_vl"] = (
+                "pipeline_version" in inspect.signature(PaddleOCRVL.__init__).parameters
+            )
     return result
 
 
@@ -284,8 +284,7 @@ def _spotting_capable(pipeline: Any) -> bool:
     A newer version counts as capable, because the parent falls back to the
     blocks when a response carries no spotting result.
     """
-    version = getattr(pipeline, "pipeline_version", None)
-    return version is not None and version != "v1"
+    return pipeline.pipeline_version != "v1"
 
 
 def _vl_block(block: Any, *, check_shape: bool) -> dict[str, Any]:
@@ -420,7 +419,6 @@ def _respond(line: str) -> str:
         except Exception:
             message = "<str() of the exception failed>"
         error = {
-            "type": type(exc).__name__,
             "chain": _chain(exc),
             "message": message,
             "traceback": traceback.format_exc(),

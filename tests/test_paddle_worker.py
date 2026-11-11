@@ -110,6 +110,20 @@ def test_ping_reports_versions_and_devices(spawn_worker):
     assert reported == ("3.2.1", "3.4.0", True, 2)
 
 
+def test_ping_reports_the_error_of_a_failed_cuda_query(spawn_worker):
+    worker = spawn_worker(FAKE_CUDA_QUERY_ERROR="CUDA driver not found")
+    result = _call(worker, {"id": 1, "op": "ping"})["result"]
+    assert (result["cuda_devices"], result["cuda_error"]) == (
+        0,
+        "RuntimeError: CUDA driver not found",
+    )
+
+
+def test_ping_reports_no_paddleocr_vl_without_the_pipeline_version_parameter(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLEOCR_VL_LEGACY="1")
+    assert _call(worker, {"id": 1, "op": "ping"})["result"]["paddleocr_vl"] is False
+
+
 def test_ping_reports_missing_paddleocr_as_null(worker_without_paddleocr):
     result = _call(worker_without_paddleocr, {"id": 1, "op": "ping"})["result"]
     assert result["paddleocr"] is None
@@ -263,20 +277,6 @@ def test_vl_v1_pipeline_gets_the_ocr_prompt(worker, png):
     assert (result["spotting_capable"], result["spotting"]) == (False, None)
 
 
-def test_vl_pipeline_without_the_version_parameter_runs_in_ocr_mode(spawn_worker, png):
-    worker = spawn_worker(FAKE_PADDLEOCR_VL_LEGACY="1")
-    request = {
-        "id": 12,
-        "op": "vl",
-        "image": str(png),
-        "kwargs": {"device": "cpu"},
-        "pipeline_version": "v1.5",
-    }
-    response = _call(worker, request)
-    assert response["ok"] is True, response["error"]["message"]
-    assert response["result"]["spotting_capable"] is False
-
-
 def _raw_vl(
     request_id: int, png: Path, raw_results: list[Any], **fake_kwargs: Any
 ) -> dict[str, Any]:
@@ -397,7 +397,7 @@ def test_orientation_reuses_one_model(worker, png, construction_log):
 
 def test_unknown_op_is_an_error_response(worker):
     response = _call(worker, {"id": 9, "op": "dance"})
-    assert response["ok"] is False and response["error"]["type"] == "ValueError"
+    assert response["ok"] is False and response["error"]["chain"][0] == "ValueError"
 
 
 def _vl_failing_on_dependencies(request_id: int, how: str, png: Path) -> dict[str, Any]:
@@ -420,7 +420,7 @@ def _vl_failing_on_dependencies(request_id: int, how: str, png: Path) -> dict[st
 )
 def test_error_response_names_each_exception_the_error_came_from(worker, png, how, chain):
     error = _call(worker, _vl_failing_on_dependencies(21, how, png))["error"]
-    assert (error["type"], error["chain"]) == ("RuntimeError", chain)
+    assert error["chain"] == chain
 
 
 def test_error_response_arrives_for_exceptions_that_cause_each_other(worker, png):
@@ -431,7 +431,7 @@ def test_error_response_arrives_for_exceptions_that_cause_each_other(worker, png
 def test_exception_that_cannot_be_printed_is_an_error_response(worker, png):
     kwargs = {"device": "cpu", "unprintable_error": True}
     response = _call(worker, {"id": 20, "op": "classic", "image": str(png), "kwargs": kwargs})
-    assert response["error"]["type"] == "UnprintableError"
+    assert response["error"]["chain"][0] == "UnprintableError"
 
 
 @pytest.mark.parametrize("line", ["not json", '{"op": "ping"}'])

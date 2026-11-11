@@ -2,8 +2,8 @@
 
 The worker's ping reports the paddle and paddleocr versions (null for a
 package that does not import, with the reason beside), whether
-``PaddleOCRVL`` imports and how many CUDA devices paddle sees. A fake
-``worker.call`` answers it.
+``PaddleOCRVL`` imports and takes ``pipeline_version``, and how many CUDA
+devices paddle sees. A fake ``worker.call`` answers it.
 """
 
 from __future__ import annotations
@@ -42,12 +42,12 @@ def _opts(engine: str) -> types.SimpleNamespace:
 def _ping(**fields: Any) -> dict[str, Any]:
     return {
         "cuda_devices": 1,
+        "cuda_error": None,
         "paddle": "3.2.1",
         "paddle_error": None,
         "paddleocr": "3.4.0",
         "paddleocr_error": None,
         "paddleocr_vl": True,
-        "python": "3.13.5",
         **fields,
     }
 
@@ -81,16 +81,21 @@ def test_check_options_classic_gpu_fails_when_no_device_visible(monkeypatch):
         ocrmypdf_plugin.check_options(_opts("classic-gpu"))
 
 
+def test_check_options_classic_gpu_names_the_error_of_a_failed_cuda_query(monkeypatch):
+    _answer(monkeypatch, _ping(cuda_devices=0, cuda_error="RuntimeError: CUDA driver not found"))
+    with pytest.raises(MissingDependencyError, match="RuntimeError: CUDA driver not found"):
+        ocrmypdf_plugin.check_options(_opts("classic-gpu"))
+
+
 def test_check_options_classic_cpu_needs_no_cuda_device(monkeypatch):
-    _answer(monkeypatch, _ping(cuda_devices=0))
+    _answer(monkeypatch, _ping(cuda_devices=0, cuda_error="RuntimeError: CUDA driver not found"))
     ocrmypdf_plugin.check_options(_opts("classic-cpu"))
 
 
-@pytest.mark.parametrize("engine", ["classic-cpu", "vl-remote"])
-def test_missing_paddleocr_names_the_worker_interpreter(monkeypatch, engine):
+def test_missing_paddleocr_names_the_worker_interpreter(monkeypatch):
     _answer(monkeypatch, _ping(**NO_PADDLEOCR))
     with pytest.raises(MissingDependencyError) as info:
-        ocrmypdf_plugin.check_options(_opts(engine))
+        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
     assert INTERPRETER in str(info.value)
 
 
@@ -141,11 +146,12 @@ def test_missing_package_in_the_default_venv_reports_no_missing_venv(
     assert "No worker venv was found" not in str(info.value)
 
 
-def test_paddleocr_that_does_not_import_names_the_reason(monkeypatch):
+@pytest.mark.parametrize("engine", ["classic-cpu", "vl-remote"])
+def test_paddleocr_that_does_not_import_names_the_reason(monkeypatch, engine):
     reason = "PermissionError: [Errno 13] Permission denied: '/home/paperless/.paddlex'"
     _answer(monkeypatch, _ping(**{**NO_PADDLEOCR, "paddleocr_error": reason}))
     with pytest.raises(MissingDependencyError) as info:
-        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
+        ocrmypdf_plugin.check_options(_opts(engine))
     assert reason in str(info.value)
 
 
@@ -155,6 +161,14 @@ def test_paddle_that_does_not_import_names_the_reason(monkeypatch):
     with pytest.raises(MissingDependencyError) as info:
         ocrmypdf_plugin.check_options(_opts("classic-cpu"))
     assert reason in str(info.value)
+
+
+def test_missing_paddle_and_paddleocr_names_both_reasons(monkeypatch):
+    _answer(monkeypatch, _ping(**NO_PADDLE, **NO_PADDLEOCR, cuda_devices=0))
+    with pytest.raises(MissingDependencyError) as info:
+        ocrmypdf_plugin.check_options(_opts("classic-cpu"))
+    assert NO_PADDLE["paddle_error"] in str(info.value)
+    assert NO_PADDLEOCR["paddleocr_error"] in str(info.value)
 
 
 def test_failed_ping_names_the_worker_interpreter(monkeypatch):

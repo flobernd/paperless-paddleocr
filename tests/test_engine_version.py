@@ -19,7 +19,6 @@ _PING = {
     "paddle": "3.2.1",
     "paddleocr": "3.4.0",
     "paddleocr_vl": True,
-    "python": "3.13.5",
 }
 
 

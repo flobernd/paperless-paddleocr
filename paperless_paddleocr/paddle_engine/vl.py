@@ -6,9 +6,9 @@ no layout model runs on the paperless side. It sends the whole page image to
 a remote vLLM server for recognition, and this module places the words the
 server returns. Two response shapes are handled:
 
-* **spotting** - native per-word polygons (available when the worker's
-  ``paddleocr`` exposes ``pipeline_version``). The words are clustered into
-  reading lines geometrically.
+* **spotting** - native per-word polygons, from a pipeline version after
+  v1. The worker passes the version to each pipeline it builds. The words
+  are clustered into reading lines geometrically.
 * **ocr** - blocks with a multi-line text transcription but no word
   boxes. Each block is split into lines and the words are positioned by the
   proportional estimator.
@@ -41,7 +41,7 @@ OCR_SYSTEM = "PaddleOCR-VL via paperless-paddleocr"
 
 #: The requirement the VL install hints name. paddle-requirements-vl.txt and
 #: the README cannot import it and repeat it by hand.
-VL_REQUIREMENT = "paddleocr[doc-parser]>=3.0,<4"
+VL_REQUIREMENT = "paddleocr[doc-parser]>=3.4,<4"
 
 #: VL recognition returns no per-word confidence; the invisible layer still
 #: needs an ``x_wconf``, so a fixed high value is used.
@@ -128,8 +128,9 @@ def pipeline_version(options: Any) -> str:
 def pipeline_kwargs(options: Any) -> dict[str, Any]:
     """The ``PaddleOCRVL`` constructor arguments for ``options``, without ``pipeline_version``.
 
-    The worker adds the version when its ``paddleocr`` takes the parameter.
-    The arguments carry the API key, so the log shows only whether it is set.
+    The request carries the version beside them, and the worker passes it to
+    each pipeline it builds. The arguments carry the API key, so the log shows
+    only whether it is set.
     """
     url = normalize_server_url(_vl_option(options, "paddle_vl_server_url"))
     model_name = _vl_option(options, "paddle_vl_model_name", DEFAULT_VL_MODEL_NAME)
