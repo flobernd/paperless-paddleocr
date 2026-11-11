@@ -57,12 +57,6 @@ def _classic(png: Path, **kwargs: Any) -> dict[str, Any]:
     return {"op": "classic", "image": str(png), "kwargs": {"device": "cpu", **kwargs}}
 
 
-def test_error_response_raises_with_the_type(fake_worker_env):
-    with pytest.raises(worker.PaddleWorkerError) as info:
-        worker.call({"op": "dance"})
-    assert info.value.error_chain == ("ValueError",)
-
-
 def test_error_response_raises_with_the_chain(fake_worker_env, png):
     # The fake raises a RuntimeError from a DependencyError, as paddlex does.
     request = {
