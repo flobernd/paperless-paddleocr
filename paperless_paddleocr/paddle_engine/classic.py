@@ -19,8 +19,14 @@ from PIL import Image
 from paperless_paddleocr.languages import first_paddle_lang, normalize_paddle_lang
 from paperless_paddleocr.paddle_engine import worker
 from paperless_paddleocr.paddle_engine.geometry import BBox, poly_to_bbox, union_boxes
-from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, words_from_text
-from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline
+from paperless_paddleocr.paddle_engine.hocr import (
+    Block,
+    Line,
+    Page,
+    Word,
+    words_baseline,
+    words_from_text,
+)
 
 log = logging.getLogger("paperless.paddleocr.classic")
 
@@ -170,16 +176,6 @@ def _word_box(boxes: list[Any], sx: float, sy: float) -> BBox:
     return union_boxes(poly_to_bbox(_scaled(box, sx, sy)) for box in boxes)
 
 
-def _region_baseline(words: list[Word], region_box: BBox) -> tuple[float, float]:
-    """Fit a straight baseline for a one-line region from its word boxes.
-
-    Classic PaddleOCR returns one detection region per line, so a region's
-    words share a baseline.
-    """
-    points = [((w.box[0] + w.box[2]) / 2.0, float(w.box[3])) for w in words]
-    return fit_hocr_baseline(points, region_box)
-
-
 def build_page(input_file: Path, options: Any) -> Page:
     """OCR ``input_file`` with the classic pipeline into a :class:`Page`."""
     with Image.open(input_file) as img:
@@ -219,12 +215,14 @@ def build_page(input_file: Path, options: Any) -> Page:
         else:
             words = words_from_text(text, region_box, conf)
 
+        # Classic PaddleOCR returns one detection region per line, so a
+        # region's words share a baseline.
         line = Line(
             box=region_box,
             confidence=conf,
             text=text,
             words=words,
-            baseline=_region_baseline(words, region_box),
+            baseline=words_baseline(words, region_box),
         )
         page.blocks.append(Block(box=region_box, lines=[line]))
 
