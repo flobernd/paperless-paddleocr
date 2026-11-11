@@ -149,6 +149,12 @@ def test_ping_reports_the_first_paddle_import_error(spawn_worker):
     assert "/home/paperless/.cache/paddle" in error
 
 
+def test_ping_answers_when_the_paddle_import_error_cannot_be_printed(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLEPADDLE_FAIL_IMPORT="unprintable")
+    result = _call(worker, {"id": 1, "op": "ping"})["result"]
+    assert result["paddle"] is None and "UnprintableImportError" in result["paddle_error"]
+
+
 def test_ping_imports_paddleocr_again_after_a_failed_import(spawn_worker):
     worker = spawn_worker(FAKE_PADDLE_FAIL_IMPORT="once")
     _call(worker, {"id": 1, "op": "ping"})
