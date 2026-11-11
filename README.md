@@ -39,13 +39,15 @@ keeps working, and archive PDFs remain PDF/A.
 | `PAPERLESS_PADDLEOCR_ENGINE` | Hardware | Paddle wheel | Image recipe | Throughput / accuracy notes |
 | --- | --- | --- | --- | --- |
 | `classic-cpu` (default) | x86_64 CPU | `paddlepaddle` | [`Dockerfile.classic-cpu`](examples/Dockerfile.classic-cpu) | Roughly 1-3 pages/sec on a modern CPU (rough guidance, not a benchmark). No GPU needed. Right default for most deployments. |
-| `classic-gpu` | Local NVIDIA GPU | `paddlepaddle-gpu` | [`Dockerfile.classic-gpu`](examples/Dockerfile.classic-gpu) | Fast classic pipeline accelerated on a local GPU. Same accuracy as CPU, lower latency. |
-| `vl-remote` | Remote NVIDIA host | `paddlepaddle` (CPU, recognition runs remotely) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
+| `classic-gpu` | x86_64 host with a local NVIDIA GPU | `paddlepaddle-gpu` | [`Dockerfile.classic-gpu`](examples/Dockerfile.classic-gpu) | Fast classic pipeline accelerated on a local GPU. Same accuracy as CPU, lower latency. |
+| `vl-remote` | x86_64 paperless host, remote NVIDIA host | `paddlepaddle` (CPU, recognition runs remotely) | [`Dockerfile.vl-remote`](examples/Dockerfile.vl-remote) + `paddleocr-genai-vllm-server` sidecar | Much higher accuracy on small fonts, low-DPI scans, handwriting. Per-page latency depends on the remote GPU - expect tens of seconds per page. |
 
 ## Installation
 
 Build the plugin into a custom paperless-ngx image - the recipe Dockerfiles under [`examples/`](examples/)
 fetch the plugin source from this repository at build time and bake the wheel into the paperless-ngx base image.
+
+The recipes and the bootstrap scripts are built and tested on x86_64 only.
 
 An install has two parts. The plugin goes into the interpreter that runs paperless-ngx. PaddlePaddle and PaddleOCR go
 into the worker venv, a Python 3.13 venv at `/opt/paperless-paddleocr/venv`, because the paperless-ngx 3.1 and later
@@ -320,8 +322,10 @@ The `paddle_cls_model_dir` and `paddle_cls_model_name` options are gone, and ocr
 > inside the container. Mount a persistent volume at `/usr/src/paperless/.paddlex` to avoid re-downloads across
 > rebuilds. The bundled compose examples already do this. The `paperless` user downloads the models, so the recipes
 > create that directory owned by it, and a new named volume mounted there takes that ownership. With a bind mount, give
-> the host directory to the UID of `paperless` (1000 unless `USERMAP_UID` changes it). The `vl-remote` engine downloads
-> nothing on the paperless side. The ~2 GB VLM lives on the GPU server.
+> the host directory to the UID of `paperless` (1000 unless `USERMAP_UID` changes it). While
+> `PAPERLESS_OCR_ROTATE_PAGES` is on, which is the default of paperless-ngx, each engine also downloads the orientation
+> model (about 7 MB) on the paperless side, `vl-remote` included. `vl-remote` downloads no other model there. The ~2 GB
+> VLM lives on the GPU server.
 
 > [!WARNING]
 > `vl-remote` deployment: bring up the [`paddleocr-genai-vllm-server`](https://hub.docker.com/r/paddlepaddle/paddleocr-genai-vllm-server)
@@ -549,7 +553,7 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
 ### Choosing classic-pipeline models
 
 For most languages the classic engine defaults to the `PP-OCRv6_medium` detection / recognition models. On low-power
-CPUs (NAS appliances, small ARM boards) the smaller official variants trade a little accuracy for a large speedup.
+CPUs (NAS appliances, for example) the smaller official variants trade a little accuracy for a large speedup.
 Select them by name via `PAPERLESS_OCR_USER_ARGS`:
 
 ```yaml

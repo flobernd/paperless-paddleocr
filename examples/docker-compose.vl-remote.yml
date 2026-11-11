@@ -35,6 +35,8 @@ services:
       - paperless_data:/usr/src/paperless/data
       - paperless_media:/usr/src/paperless/media
       - ./consume:/usr/src/paperless/consume
+      # Persist the downloaded orientation model across container rebuilds.
+      - paperless_paddlex:/usr/src/paperless/.paddlex
     environment:
       PAPERLESS_REDIS: redis://paperless-redis:6379
       PAPERLESS_DBHOST: paperless-db
@@ -97,3 +99,4 @@ volumes:
   paperless_db:
   paperless_redis:
   paddlex_cache:
+  paperless_paddlex:
