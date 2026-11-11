@@ -25,7 +25,7 @@
 #   * paperless_paddleocr-*.whl    (wheel - any version, first match wins)
 #
 # Obtain one with either of:
-#   pip wheel --no-deps "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
+#   pip wheel --no-deps "git+https://github.com/flobernd/paperless-paddleocr.git@master"
 #   # or extract from the docker/builder.Dockerfile artifact -
 #   # see examples/extract-wheel/README.md
 #

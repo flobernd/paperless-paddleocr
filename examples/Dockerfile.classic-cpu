@@ -4,7 +4,7 @@
 #
 # Build:
 #   docker build \
-#     --build-arg PLUGIN_REF=v0.1.1 \
+#     --build-arg PLUGIN_REF=master \
 #     -f examples/Dockerfile.classic-cpu \
 #     -t paperless-paddleocr:classic-cpu .
 #

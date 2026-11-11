@@ -10,7 +10,7 @@
 #   PADDLEOCR_VL_API_KEY=<some-random-string>
 #   PAPERLESS_DB_USER=<db-user>
 #   PAPERLESS_DB_PASSWORD=<strong-db-password>
-# Optional: PLUGIN_REF=v0.1.1 (release tag for reproducible builds).
+# Optional: PLUGIN_REF=<release tag> for reproducible builds (default master).
 #
 # PADDLEOCR_VL_API_KEY must match the `api-key:` set in vllm_config.yaml -
 # the paperless container sends it as a Bearer token, the server validates it.
