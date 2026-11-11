@@ -40,19 +40,22 @@ the plugin directly from a Git ref.
 
 ```bash
 # 1. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
-pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements.txt
 # …or, for GPU:
 pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
-pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements-gpu.txt
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements-gpu.txt
 
 # 2. Install the plugin.
-pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
+pip install "git+https://github.com/flobernd/paperless-paddleocr.git@master"
 ```
 
-Replace `v0.1.1` with any tag, branch, or commit SHA. Use `master` to
-track the latest development snapshot.
+Replace `master` with a release tag or a commit SHA for a reproducible
+install.
 
-To upgrade, just re-run the second `pip install` with a newer ref.
+To upgrade, remove the plugin with `pip uninstall paperless-paddleocr` and
+run step 2 again. pip keeps an installed plugin whose version equals that of
+the ref, and each commit of `master` between two releases carries the same
+version.
 
 ## Flavour 2 - Wheel-file extraction
 
@@ -70,7 +73,7 @@ under `/dist`. Build it once and `docker cp` the wheel out:
 docker build \
     -f docker/builder.Dockerfile \
     -t paddleocr-plugin-builder \
-    "https://github.com/flobernd/paperless-paddleocr.git#v0.1.1"
+    "https://github.com/flobernd/paperless-paddleocr.git#master"
 
 # 2. Create a throwaway container and copy /dist out.
 docker create --name paddleocr-extract paddleocr-plugin-builder
@@ -92,7 +95,7 @@ Paperless-ngx discovers the plugin through its `paperless_ngx.parsers`
 entry point. Restart the paperless process(es) and confirm in the logs:
 
 ```text
-Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1
+Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v<version>
     by Florian Bernd (entrypoint: 'paddleocr').
 ```
 

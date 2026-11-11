@@ -6,7 +6,7 @@
 #
 # Build:
 #   docker build \
-#     --build-arg PLUGIN_REF=v0.1.1 \
+#     --build-arg PLUGIN_REF=master \
 #     --build-arg CUDA_WHEEL=cu126 \
 #     -f examples/Dockerfile.classic-gpu \
 #     -t paperless-paddleocr:classic-gpu .

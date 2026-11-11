@@ -10,8 +10,8 @@
 #   PAPERLESS_DB_USER=<db-user>
 #   PAPERLESS_DB_PASSWORD=<strong-db-password>
 # Optional:
-#   PLUGIN_REF=v0.1.1   # release tag for reproducible builds
-#   CUDA_WHEEL=cu129    # cu126 (default, Ampere/Ada/Hopper) | cu129 (Blackwell)
+#   PLUGIN_REF=<release tag>   # for reproducible builds (default master)
+#   CUDA_WHEEL=cu129           # cu126 (default, Ampere/Ada/Hopper) | cu129 (Blackwell)
 
 services:
   paperless:

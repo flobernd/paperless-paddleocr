@@ -75,14 +75,15 @@ Pick the method that matches your environment:
 Each engine has a matching recipe Dockerfile that pulls plugin source from a chosen Git ref, builds the wheel, and layers it
 plus the worker venv of the engine onto `ghcr.io/paperless-ngx/paperless-ngx:latest`. Build args:
 
-- `PLUGIN_REF` - Git ref to build from. Use a release tag (`v0.1.1`) for reproducible builds; `master` tracks the latest snapshot.
+- `PLUGIN_REF` - Git ref to build from (default `master`). Set a
+  [release tag](https://github.com/flobernd/paperless-paddleocr/releases) for reproducible builds.
 - `PAPERLESS_TAG` - paperless-ngx base image tag (default `latest`). Set a version tag (`3.0`) for reproducible builds.
 
 #### `classic-cpu`
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.1 \
+    --build-arg PLUGIN_REF=master \
     -f examples/Dockerfile.classic-cpu \
     -t paperless-paddleocr:classic-cpu .
 ```
@@ -110,7 +111,7 @@ For local-GPU inference with `paddlepaddle-gpu`. Additional build arg:
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.1 \
+    --build-arg PLUGIN_REF=master \
     --build-arg CUDA_WHEEL=cu126 \
     -f examples/Dockerfile.classic-gpu \
     -t paperless-paddleocr:classic-gpu .
@@ -136,7 +137,7 @@ server and places the words it returns. No layout model runs on the paperless si
 
 ```bash
 docker build \
-    --build-arg PLUGIN_REF=v0.1.1 \
+    --build-arg PLUGIN_REF=master \
     -f examples/Dockerfile.vl-remote \
     -t paperless-paddleocr:vl-remote .
 ```
@@ -164,7 +165,7 @@ custom-cont-init.d/
 ├── setup.sh                       (or setup-gpu.sh)
 └── paperless-paddleocr/
     ├── paddle-requirements.txt    (or paddle-requirements-gpu.txt)
-    └── paperless_paddleocr-0.1.1-py3-none-any.whl
+    └── paperless_paddleocr-<version>-py3-none-any.whl
 ```
 
 Mount the folder in the compose file of paperless-ngx, for example `- ./custom-cont-init.d:/custom-cont-init.d:ro`. The
@@ -191,13 +192,13 @@ sudo apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1
 
 # 2. Install the plugin from a Git ref.
-pip install "git+https://github.com/flobernd/paperless-paddleocr.git@v0.1.1"
+pip install "git+https://github.com/flobernd/paperless-paddleocr.git@master"
 
 # 3. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
-pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements.txt
 # …or, for classic-gpu:
 pip install --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
-pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements-gpu.txt
+pip install -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements-gpu.txt
 ```
 
 With Python 3.14, PaddlePaddle needs a Python 3.13 venv of its own, and `PAPERLESS_PADDLEOCR_PYTHON` in the environment
@@ -213,12 +214,12 @@ uv venv --python 3.13 /opt/paperless-paddleocr/venv
 
 # 3b. Install PaddlePaddle and PaddleOCR (paddle-requirements-vl.txt for vl-remote).
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
-    -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements.txt
+    -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements.txt
 # …or, for classic-gpu:
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
     --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ "paddlepaddle-gpu>=3.0,<4"
 uv pip install --python /opt/paperless-paddleocr/venv/bin/python \
-    -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/v0.1.1/paddle-requirements-gpu.txt
+    -r https://raw.githubusercontent.com/flobernd/paperless-paddleocr/master/paddle-requirements-gpu.txt
 ```
 
 The user that runs paperless-ngx must be able to read the venv and the interpreter it links to. uv installs its
@@ -238,7 +239,7 @@ services:
       context: ./examples
       dockerfile: Dockerfile.classic-cpu
       args:
-        PLUGIN_REF: v0.1.1
+        PLUGIN_REF: master
     image: paperless-paddleocr:classic-cpu
     restart: unless-stopped
     volumes:
@@ -271,20 +272,21 @@ On first startup the container will:
 2. Discover this package via the `paperless_ngx.parsers` entry point. Look for this log line:
 
    ```text
-   Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1 by Florian Bernd (entrypoint: 'paddleocr').
+   Loaded third-party parser 'Paperless-ngx PaddleOCR Parser' v<version> by Florian Bernd (entrypoint: 'paddleocr').
    ```
 
 3. Route ingested documents through PaddleOCR instead of Tesseract. Each document logs:
 
    ```text
-   Document handled by third-party parser 'Paperless-ngx PaddleOCR Parser' v0.1.1 …
+   Document handled by third-party parser 'Paperless-ngx PaddleOCR Parser' v<version> …
    ```
 
 ### Updating
 
-Re-build the custom image with a newer `PLUGIN_REF` and the recipe Dockerfile of the same ref, and recreate the
-container. A local copy of an older recipe builds an image without the worker venv that this version runs PaddlePaddle
-in. The `paddleocr-genai-vllm-server` sidecar (for `vl-remote`) is updated independently by pulling a newer image tag.
+Re-build the custom image with the recipe Dockerfile of the ref that `PLUGIN_REF` names, and recreate the container. If
+`PLUGIN_REF` names a release tag, set the newer tag first. A local copy of an older recipe builds an image without the
+worker venv that this version runs PaddlePaddle in. The `paddleocr-genai-vllm-server` sidecar (for `vl-remote`) is
+updated independently by pulling a newer image tag.
 
 The recipes install the worker venv in a layer of its own, which Docker reuses as long as the requirement file of the
 new ref is unchanged, so a rebuild keeps the PaddlePaddle and PaddleOCR versions of the earlier build. Build with
