@@ -402,6 +402,30 @@ def test_orientation_reuses_one_model(worker, png, construction_log):
     assert _constructions(construction_log, "DocImgOrientationClassification") == 1
 
 
+def test_models_reports_the_selection_of_each_language(worker):
+    request = {"id": 35, "op": "models", "languages": ["en", "german", "ru"]}
+    assert _call(worker, request)["result"] == {
+        "models": [["det-a", "rec-a"], ["det-a", "rec-a"], ["det-b", "rec-b"]],
+    }
+
+
+def test_models_cannot_tell_without_the_selection_of_paddleocr(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLEOCR_NO_MODEL_SELECTION="1")
+    request = {"id": 36, "op": "models", "languages": ["en", "german"]}
+    assert _call(worker, request)["result"] == {"models": [None, None]}
+
+
+def test_models_cannot_tell_when_the_selection_of_paddleocr_raises(spawn_worker):
+    worker = spawn_worker(FAKE_PADDLEOCR_MODEL_SELECTION_RAISES="1")
+    request = {"id": 38, "op": "models", "languages": ["en", "german"]}
+    assert _call(worker, request)["result"] == {"models": [None, None]}
+
+
+def test_models_cannot_tell_the_selection_of_a_null_language(worker):
+    request = {"id": 37, "op": "models", "languages": [None, "en"]}
+    assert _call(worker, request)["result"] == {"models": [None, ["det-a", "rec-a"]]}
+
+
 def test_unknown_op_is_an_error_response(worker):
     response = _call(worker, {"id": 9, "op": "dance"})
     assert response["ok"] is False and response["error"]["chain"][0] == "ValueError"

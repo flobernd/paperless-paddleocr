@@ -64,7 +64,24 @@ def _pass_languages(options: Any) -> list[str]:
             "+".join(langs),
         )
         return langs[:1]
-    return langs
+    # A language whose models the worker cannot tell keeps its own pass, so
+    # no configured language is dropped.
+    kept: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for lang, models in zip(langs, classic.selected_models(langs), strict=True):
+        if models in seen:
+            continue
+        kept.append(lang)
+        if models is not None:
+            seen.add(models)
+    if len(kept) < len(langs):
+        log.info(
+            "Languages that select the same models share a pass. Running %s instead of %d (%s).",
+            "one pass" if len(kept) == 1 else f"{len(kept)} passes",
+            len(langs),
+            "+".join(langs),
+        )
+    return kept
 
 
 class PaddleOCREngine(OcrEngine):
@@ -132,16 +149,17 @@ class PaddleOCREngine(OcrEngine):
 
         Single-language input runs one pass. So does input for vl-remote or
         with a model option set, whose page is labelled with the first
-        language. Other multi-language input builds one page per language and
-        combines those pages based on the ``paddle_multi_lang_strategy``
-        option, which the paperless parser sets from
-        ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
+        language. Other multi-language input runs one pass for each group of
+        languages for which PaddleOCR selects the same models, labelled with
+        the first language of the group. Several such pages are combined
+        based on the ``paddle_multi_lang_strategy`` option, which the
+        paperless parser sets from ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
 
-        * ``winner`` (default) - write the page of the language with the
-          highest aggregate confidence (the sum of its word confidences) as
-          a run of that language alone writes it.
+        * ``winner`` (default) - write the page of the pass with the highest
+          aggregate confidence (the sum of its word confidences) as a run of
+          its language alone writes it.
           Faster and more consistent on documents whose pages are single-script.
-        * ``merge`` - NMS-merge word boxes from all languages by confidence.
+        * ``merge`` - NMS-merge word boxes from all passes by confidence.
           Right choice for genuinely mixed-script pages.
 
         The first pass that raises fails the document.

@@ -35,6 +35,11 @@ Ops:
   ``text_word_region`` (lists, empty when the result lacks them) and
   ``preprocessed_shape`` (``[h, w]`` of the image the pipeline detected on,
   or null).
+* ``models`` with ``languages`` (a list of ``lang`` values, null for the
+  default model): ``models``, one entry per language in the order asked,
+  the ``[detection model, recognition model]`` that ``PaddleOCR`` selects
+  for that language, or null where the worker cannot tell, as for a null
+  language.
 * ``orientation`` with ``image``: the top ``label`` and its ``score``.
 * ``ping``: ``cuda_devices``, ``cuda_error`` (null when the query succeeds
   or paddle does not import, otherwise the exception class name and
@@ -366,8 +371,34 @@ def _orientation(request: dict[str, Any]) -> dict[str, Any]:
     return {"label": str(labels[0]), "score": float(scores[0])}
 
 
+def _selection(select: Any, lang: str | None) -> list[str] | None:
+    # Without a lang, the constructors before paddleocr 3.7 skip this method
+    # and take the models of the paddlex pipeline config, so its answer for
+    # None would not be the selection.
+    if select is None or lang is None:
+        return None
+    # A release that changed the private method raises here or answers in
+    # another shape, and null keeps the pass of each language. None in the
+    # pair means PaddleOCR names no model for the language.
+    try:
+        det, rec = select(None, lang, None)
+    except Exception:
+        return None
+    return [det, rec] if isinstance(det, str) and isinstance(rec, str) else None
+
+
+def _models(request: dict[str, Any]) -> dict[str, Any]:
+    from paddleocr import PaddleOCR
+
+    # The constructor selects its models with this private method, which
+    # reads only its two arguments, so the op needs no pipeline.
+    select = getattr(PaddleOCR, "_get_ocr_model_names", None)
+    return {"models": [_selection(select, lang) for lang in request["languages"]]}
+
+
 _OPS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "classic": _classic,
+    "models": _models,
     "orientation": _orientation,
     "ping": _ping,
     "vl": _vl,
