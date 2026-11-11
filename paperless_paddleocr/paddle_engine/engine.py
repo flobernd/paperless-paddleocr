@@ -73,7 +73,14 @@ class PaddleOCREngine(OcrEngine):
     @staticmethod
     def creator_tag(options: Any) -> str:
         if _variant(options) == "vl-remote":
-            return f"PaddleOCR-VL-1.5 {PaddleOCREngine.version()}"
+            # The name follows the version string, because the option admits a
+            # release newer than this code knows. The first release has no
+            # number in its name.
+            version = vl.pipeline_version(options)
+            family = (
+                "PaddleOCR-VL" if version == "v1" else f"PaddleOCR-VL-{version.removeprefix('v')}"
+            )
+            return f"{family} {PaddleOCREngine.version()}"
         return f"PaddleOCR {PaddleOCREngine.version()}"
 
     def __str__(self) -> str:

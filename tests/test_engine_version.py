@@ -34,5 +34,11 @@ def test_creator_tag_names_the_paddleocr_version_of_the_ping():
     assert PaddleOCREngine.creator_tag(options) == "PaddleOCR 3.4.0"
 
 
+def test_vl_creator_tag_names_the_configured_pipeline_version():
+    options = types.SimpleNamespace(paddle_engine="vl-remote", paddle_vl_pipeline_version="v1.6")
+    worker.ping()
+    assert PaddleOCREngine.creator_tag(options) == "PaddleOCR-VL-1.6 3.4.0"
+
+
 def test_version_before_a_ping_is_unknown():
     assert PaddleOCREngine.version() == "unknown"
