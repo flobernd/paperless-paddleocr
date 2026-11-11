@@ -400,6 +400,7 @@ PaddleOCR-VL pipeline version used on the paperless side (`v1`, `v1.5`, `v1.6`).
 match the model family the inference server serves: keep `v1.5` for the documented
 `PaddleOCR-VL-1.5-0.9B` server; set `v1.6` together with
 `PAPERLESS_PADDLEOCR_VL_MODEL_NAME` when the server runs a 1.6 model.
+`v1.6` needs paddleocr 3.6 or later in the worker venv.
 
 Default: `v1.5`.
 
@@ -630,14 +631,15 @@ variable to the interpreter itself.
 
 ### `vl-remote` fails with "PaddleOCR-VL dependencies are missing" or "PaddleOCR-VL is not available"
 
-The worker venv lacks the `doc-parser` extra of PaddleOCR, or holds a `paddleocr` release that predates PaddleOCR-VL. A
-worker venv built for `vl-remote` comes from [`paddle-requirements-vl.txt`](paddle-requirements-vl.txt), as in the
-`vl-remote` recipe. That file also pins the CPU wheel `paddlepaddle`, and an install of the file into a GPU venv would
-put that wheel over `paddlepaddle-gpu`. An existing worker venv, CPU or GPU, from a recipe or a bootstrap script
-therefore gets the extra alone and keeps its paddle wheel:
+The worker venv lacks the `doc-parser` extra of PaddleOCR, or holds a `paddleocr` release below 3.4, the lowest release
+the `vl-remote` engine supports. A worker venv built for `vl-remote` comes from
+[`paddle-requirements-vl.txt`](paddle-requirements-vl.txt), as in the `vl-remote` recipe. That file also pins the CPU
+wheel `paddlepaddle`, and an install of the file into a GPU venv would put that wheel over `paddlepaddle-gpu`. An
+existing worker venv, CPU or GPU, from a recipe or a bootstrap script therefore gets the extra alone and keeps its
+paddle wheel:
 
 ```bash
-uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade "paddleocr[doc-parser]>=3.0,<4"
+uv pip install --python /opt/paperless-paddleocr/venv/bin/python --upgrade "paddleocr[doc-parser]>=3.4,<4"
 ```
 
 ### `pip install` of `paddlepaddle-gpu` fails with `No matching distribution`

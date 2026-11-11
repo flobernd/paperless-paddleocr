@@ -65,7 +65,7 @@ jobs:
       - name: Install mypy and typed runtime deps
         run: |
           python -m pip install --upgrade pip mypy
-          python -m pip install "ocrmypdf>=17.4" "lxml>=4.9" pillow numpy
+          python -m pip install "ocrmypdf>=17.4" pillow numpy
 
       # reviewdog/action-mypy was deleted; reviewdog/action-setup installs the
       # reviewdog CLI, which parses mypy's column output into PR annotations.
@@ -98,7 +98,7 @@ jobs:
       - name: Install ruff, mypy and typed runtime deps
         run: |
           python -m pip install --upgrade pip ruff mypy
-          python -m pip install "ocrmypdf>=17.4" "lxml>=4.9" pillow numpy
+          python -m pip install "ocrmypdf>=17.4" pillow numpy
 
       # Mirrors the reviewdog `ruff`/`mypy` jobs (which only annotate PRs)
       # so a direct push to master is gated too. Also gates `ruff format`,
@@ -134,7 +134,7 @@ jobs:
       - name: Install runtime + test deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install . pytest
+          python -m pip install . pytest lxml
 
       - name: Run pytest
         run: pytest tests/ -q

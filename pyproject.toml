@@ -33,11 +33,12 @@ classifiers = [
 # so the plugin runs both in a worker process under a second interpreter, and
 # the paddle-requirements*.txt files list the packages of that interpreter's
 # venv. numpy is listed because the deskew pass imports it in the paperless
-# interpreter, where neither ocrmypdf nor lxml requires it.
+# interpreter, where ocrmypdf does not require it, and pillow is listed
+# because four engine modules import PIL.
 dependencies = [
-    "lxml>=4.9",
     "numpy>=1.26",
     "ocrmypdf>=17.4",
+    "pillow>=10",
 ]
 
 [project.urls]
