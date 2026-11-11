@@ -79,49 +79,38 @@ class PaddleWorkerError(RuntimeError):
 
     ``error_chain`` holds the class names of the exception the worker
     reported and of each exception before it, as the worker reported them,
-    and is empty when the worker itself failed or its error response named
-    no class. ``worker_stderr`` holds the last stderr lines of a worker that
-    failed, and is empty for an error response.
+    and is empty when the worker itself failed or its error response carried
+    no chain.
     """
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        error_chain: tuple[str, ...] = (),
-        worker_stderr: str = "",
-    ) -> None:
+    def __init__(self, message: str, *, error_chain: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.error_chain = error_chain
-        self.worker_stderr = worker_stderr
-
-    @property
-    def error_type(self) -> str:
-        """The exception class name the worker reported, empty when the worker itself failed."""
-        return self.error_chain[0] if self.error_chain else ""
 
 
-def worker_interpreter() -> str:
-    """The interpreter that runs the worker.
+def _interpreter() -> tuple[str, bool]:
+    """The interpreter that runs the worker, and whether it is the fallback.
 
     ``PAPERLESS_PADDLEOCR_PYTHON`` when set, else the default worker venv when
-    it exists, else this interpreter, which serves an install that put paddle
-    beside the plugin.
+    it exists, else this interpreter as the fallback, which serves an install
+    that put paddle beside the plugin.
     """
     configured = os.environ.get("PAPERLESS_PADDLEOCR_PYTHON")
     if configured:
-        return configured
+        return configured, False
     if Path(DEFAULT_WORKER_PYTHON).exists():
-        return DEFAULT_WORKER_PYTHON
-    return sys.executable
+        return DEFAULT_WORKER_PYTHON, False
+    return sys.executable, True
+
+
+def worker_interpreter() -> str:
+    """The interpreter that runs the worker."""
+    return _interpreter()[0]
 
 
 def uses_fallback_interpreter() -> bool:
     """Whether :func:`worker_interpreter` falls back to this interpreter."""
-    return (
-        not os.environ.get("PAPERLESS_PADDLEOCR_PYTHON")
-        and not Path(DEFAULT_WORKER_PYTHON).exists()
-    )
+    return _interpreter()[1]
 
 
 def worker_environment() -> dict[str, str]:
@@ -309,8 +298,7 @@ class _Worker:
     def _fail(self, reason: str) -> PaddleWorkerError:
         tail = self.stop()
         return PaddleWorkerError(
-            f"{reason}.\nExit status: {self.process.returncode}\nLast lines of its stderr:\n{tail}",
-            worker_stderr=tail,
+            f"{reason}.\nExit status: {self.process.returncode}\nLast lines of its stderr:\n{tail}"
         )
 
     def stop(self) -> str:
@@ -350,8 +338,8 @@ def _timeout() -> int:
 def call(request: dict[str, Any]) -> dict[str, Any]:
     """Run ``request`` in the worker and return the result of its response.
 
-    Raises ``PaddleWorkerError`` for an error response, with the exception
-    type and chain the worker reported, and for a worker that failed.
+    Raises ``PaddleWorkerError`` for an error response, with the chain the
+    worker reported, and for a worker that failed.
     """
     global _worker
     op = request.get("op")
@@ -387,11 +375,9 @@ def call(request: dict[str, Any]) -> dict[str, Any]:
         return response["result"]
     error = response["error"]
     log.debug("Paddle worker request %d failed:\n%s", request_id, error.get("traceback", ""))
-    # A line without a chain still names the exception's own class, the first
-    # link of each chain, when it carries the type.
     chain = error.get("chain")
     if not isinstance(chain, list):
-        chain = [error["type"]] if isinstance(error.get("type"), str) else []
+        chain = []
     raise PaddleWorkerError(error["message"], error_chain=tuple(chain))
 
 
