@@ -342,7 +342,7 @@ The plugin reads its own configuration from `PAPERLESS_PADDLEOCR_*` environment 
 ### `PAPERLESS_PADDLEOCR_SCORE`
 
 Parser-registry priority. Higher scores win when more than one parser claims the same MIME type. The built-in Tesseract parser scores
-`10`, so the default makes PaddleOCR preferred whenever this plugin is installed. Set to `5` to defer to Tesseract while keeping the
+`10`, so the default puts PaddleOCR ahead of Tesseract. Set to `5` to defer to Tesseract while keeping the
 plugin available.
 
 Default: `15`.
@@ -482,7 +482,8 @@ default `always` changes nothing. With `workflow_only`, paperless-ngx gives a do
 to a local parser. The "Remote OCR" workflow action and the "Use remote OCR" option of "Reprocess" mark a document, and
 the UI shows them only when paperless-ngx's own remote engine (Azure AI) is configured. Without that engine, the REST
 API is the way to mark a document. That engine scores 20 and this plugin 15 by default, so when that engine is
-configured, the plugin needs `PAPERLESS_PADDLEOCR_SCORE` of 20 or more to take a marked document of a type both support.
+configured, the plugin needs `PAPERLESS_PADDLEOCR_SCORE` of 20 or more to take any document of a type both support
+under `always`, and any marked one under `workflow_only`.
 
 ## Honoured paperless-ngx settings
 
@@ -548,7 +549,7 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
 - **Concurrency:** within one paperless worker, OCR inference runs one page at a time
   (Paddle predictors are not thread-safe); ocrmypdf still parallelises rasterisation and
   post-processing across `PAPERLESS_THREADS_PER_WORKER` threads. Scale page throughput
-  with `PAPERLESS_TASK_WORKERS` (each worker process gets its own engine instance).
+  with `PAPERLESS_TASK_WORKERS` (each paperless-ngx worker process gets its own engine instance).
 
 ### Choosing classic-pipeline models
 
@@ -584,9 +585,10 @@ the message names the interpreter the plugin started:
   has no worker venv, so the plugin fell back to that interpreter, which has no PaddlePaddle. The Python 3.14 of the
   paperless-ngx 3.1 and later images cannot install it. Install the worker venv as [Installation](#installation)
   describes, or set [`PAPERLESS_PADDLEOCR_PYTHON`](#paperless_paddleocr_python).
-- "The paddle worker cannot run" with `/opt/paperless-paddleocr/venv/bin/python` and
+- "The paddle worker cannot run" with the worker interpreter, such as `/opt/paperless-paddleocr/venv/bin/python`, and
   `The paddle worker exited before it answered the ping request`: the worker process ended before it answered. The
-  `Exit status` and the `Last lines of its stderr` in the message show why.
+  `Exit status` and the `Last lines of its stderr` in the message show why, and a stderr line on the worker's parent
+  has [its own entry](#the-paddle-worker-exits-because-its-parent-is-process-m-not-process-n).
 - "The paddle worker cannot run" with the value of `PAPERLESS_PADDLEOCR_PYTHON` and `Cannot start the paddle worker`:
   that path does not exist or cannot run. Correct the setting.
 
@@ -608,9 +610,9 @@ that uv installed as root without `UV_PYTHON_INSTALL_DIR`.
 
 To install the packages of the engine into the worker venv by hand, as [Installation](#installation) and the bootstrap
 scripts do, with `--upgrade` on the requirement files to replace older releases, run the commands below. A container
-built from a recipe holds none of the requirement files, so take them from a checkout of this repository, from the
-`paperless-paddleocr/` subdirectory of the bootstrap layout, or in the raw URL form of [C. Non-Docker host
-install](#c-non-docker-host-install):
+built from a recipe holds none of the requirement files, and a bootstrap deployment holds only the file of its script,
+in its `paperless-paddleocr/` subdirectory. A checkout of this repository supplies a missing file, and so does the raw
+URL form of [C. Non-Docker host install](#c-non-docker-host-install), in a container as well as on a host:
 
 ```bash
 # classic-cpu
