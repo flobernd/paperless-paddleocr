@@ -377,9 +377,11 @@ _HANGING_PARENT = (
 )
 
 
-def _pid_when_written(path: Path) -> int:
+def _pid_when_written(path: Path, parent: subprocess.Popen[bytes]) -> int:
     deadline = time.monotonic() + 30
     while not path.exists():
+        status = parent.poll()
+        assert status is None, f"the parent exited with status {status} before {path} was written"
         assert time.monotonic() < deadline, f"no pid in {path} within 30 s"
         time.sleep(0.05)
     return int(path.read_text(encoding="utf-8"))
@@ -403,7 +405,7 @@ def _worker_exits_after_its_parent_is_killed(png: Path, pid_file: Path) -> bool:
         )
         # The kill runs before Popen.__exit__ reaps the parent.
         cleanup.callback(parent.kill)
-        pidfd = os.pidfd_open(_pid_when_written(pid_file))
+        pidfd = os.pidfd_open(_pid_when_written(pid_file, parent))
         cleanup.callback(os.close, pidfd)
         cleanup.callback(_kill_if_running, pidfd)
         parent.send_signal(signal.SIGKILL)
