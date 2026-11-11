@@ -13,11 +13,12 @@ def _text(words: list[Word]) -> str:
 
 def test_words_to_text_reads_left_column_fully_before_right():
     words = [
-        Word("left1", (0, 0, 160, 20), 90),
+        Word("left1", (0, 0, 70, 20), 90),
+        Word("more", (80, 0, 160, 20), 90),
         Word("right1", (240, 0, 400, 20), 90),
         Word("left2", (0, 30, 160, 50), 90),
         Word("right2", (240, 30, 400, 50), 90),
         Word("left3", (0, 60, 160, 80), 90),
         Word("right3", (240, 60, 400, 80), 90),
     ]
-    assert _text(words) == ("left1\nleft2\nleft3\n\nright1\nright2\nright3")
+    assert _text(words) == ("left1 more\nleft2\nleft3\n\nright1\nright2\nright3")
