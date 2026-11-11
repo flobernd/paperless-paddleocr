@@ -9,7 +9,7 @@ The algorithm is adapted from Tesseract's ``textord/makerow.cpp``
 row-finding, operating at *word* granularity rather than connected-component
 blob granularity. The public functions are generic over the caller's word
 type via two adapter callables, so neither :mod:`vl` nor
-:mod:`ocrmypdf_plugin` needs a shared base class:
+:mod:`merge` needs a shared base class:
 
 * ``bbox_of(item) -> BBox`` -- the item's axis-aligned box.
 * ``baseline_of(item) -> float`` -- the baseline y at the item's horizontal

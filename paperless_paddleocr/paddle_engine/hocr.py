@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape
 
 from paperless_paddleocr.languages import to_hocr_lang
 from paperless_paddleocr.paddle_engine.geometry import BBox, estimate_word_boxes
+from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
 _XML_INVALID_RE = re.compile(r"[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
@@ -175,6 +176,25 @@ def render_hocr(page: Page) -> str:
 
     out.extend(["</div>", "</body>", "</html>"])
     return "\n".join(out)
+
+
+def order_page(page: Page) -> str:
+    """Reorder page.blocks in banded reading order; return the sidecar text.
+
+    Line.text stays authoritative for the sidecar because engines may space
+    a line differently from a naive word join (CJK has no inter-word
+    spaces). The hOCR is reordered too so the text layer and the sidecar
+    agree on reading order.
+    """
+    if not page.blocks:
+        return ""
+    grouped = reading_blocks(page.blocks, bbox_of=lambda b: b.box)
+    ordered = [blk for group in grouped for row in group for blk in row]
+    page.blocks = ordered
+    return "\n\n".join(
+        "\n".join(line.text for row in group for blk in row for line in blk.lines if line.text)
+        for group in grouped
+    )
 
 
 def write_document(page: Page, hocr_path: Path, text_path: Path, *, sidecar: str) -> None:
