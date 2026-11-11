@@ -19,11 +19,11 @@ from paperless_paddleocr import ocrmypdf_plugin
 from paperless_paddleocr.paddle_engine import worker
 
 
-def _ping(paddleocr_vl: bool = True) -> dict:
+def _ping(paddleocr: str = "3.4.0", paddleocr_vl: bool = True) -> dict:
     return {
         "cuda_devices": 0,
         "paddle": "3.2.1",
-        "paddleocr": "3.4.0",
+        "paddleocr": paddleocr,
         "paddleocr_vl": paddleocr_vl,
     }
 
@@ -63,11 +63,12 @@ def test_reachable_server_passes_and_is_cached(monkeypatch):
     assert calls == ["http://gpu:8118/v1/models"]
 
 
-def test_unreachable_server_raises_actionable_error(monkeypatch):
-    def fail(request, timeout=0):
-        raise urllib.error.URLError("connection refused")
+def _down(request, timeout=0):
+    raise urllib.error.URLError("connection refused")
 
-    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", fail)
+
+def test_unreachable_server_raises_actionable_error(monkeypatch):
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _down)
     with pytest.raises(MissingDependencyError, match="not reachable"):
         ocrmypdf_plugin.check_options(_opts())
 
@@ -120,14 +121,11 @@ def test_other_http_errors_do_not_block(monkeypatch):
 def test_worker_without_paddleocr_vl_is_a_missing_dependency(monkeypatch):
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _ok_urlopen([]))
-    monkeypatch.setattr(worker, "call", lambda request: _ping(paddleocr_vl=False))
+    ping = _ping(paddleocr="3.3.3", paddleocr_vl=False)
+    monkeypatch.setattr(worker, "call", lambda request: ping)
     with pytest.raises(MissingDependencyError, match="/srv/paddle-venv/bin/python") as info:
         ocrmypdf_plugin.check_options(_opts())
-    assert "3.4.0" in str(info.value)
-
-
-def _down(request, timeout=0):
-    raise urllib.error.URLError("connection refused")
+    assert "3.3.3" in str(info.value)
 
 
 def test_skip_text_run_passes_while_the_server_is_down(monkeypatch):
