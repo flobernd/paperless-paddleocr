@@ -99,8 +99,11 @@ def test_build_page_scales_boxes_from_the_preprocessed_height_and_width(tmp_path
     assert (block.box, block.lines[0].words[0].box) == ((0, 0, 50, 30), (5, 8, 25, 20))
 
 
-def test_build_page_keeps_the_boxes_for_a_zero_size_preprocessed_shape(tmp_path, monkeypatch):
-    _answer(monkeypatch, _one_word_result([0, 120]))
+@pytest.mark.parametrize("shape", [[0, 120], [20, 0]])
+def test_build_page_keeps_the_boxes_for_a_zero_size_preprocessed_shape(
+    tmp_path, monkeypatch, shape
+):
+    _answer(monkeypatch, _one_word_result(shape))
     block = classic.build_page(_png(tmp_path), _opts()).blocks[0]
     assert (block.box, block.lines[0].words[0].box) == ((0, 0, 100, 15), (10, 4, 50, 10))
 
