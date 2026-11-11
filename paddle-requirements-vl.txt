@@ -1,2 +1,2 @@
 paddlepaddle>=3.0,<4
-paddleocr[doc-parser]>=3.0,<4
+paddleocr[doc-parser]>=3.4,<4
