@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 # One home for the option defaults the parser, the ocrmypdf plugin and the
 # engine all read. This module stays free of package imports on purpose:
