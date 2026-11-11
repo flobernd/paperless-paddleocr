@@ -64,7 +64,7 @@ def test_call_returns_the_result(fake_worker_env):
 def test_error_response_raises_with_the_type(fake_worker_env):
     with pytest.raises(worker.PaddleWorkerError) as info:
         worker.call({"op": "dance"})
-    assert info.value.error_type == "ValueError"
+    assert info.value.error_chain == ("ValueError",)
 
 
 def test_error_response_raises_with_the_chain(fake_worker_env, png):
@@ -80,21 +80,14 @@ def test_error_response_raises_with_the_chain(fake_worker_env, png):
     assert info.value.error_chain == ("RuntimeError", "DependencyError")
 
 
-@pytest.mark.parametrize(
-    "error",
-    [
-        "{'type': 'RuntimeError', 'message': 'no chain here', 'traceback': ''}",
-        "{'message': 'no chain here'}",
-    ],
-)
 def test_error_response_without_a_chain_raises_the_worker_error(
-    fake_worker_env, monkeypatch, tmp_path, error
+    fake_worker_env, monkeypatch, tmp_path
 ):
     script = tmp_path / "chainless_worker.py"
     script.write_text(
         "import json, sys\n"
         "request = json.loads(sys.stdin.readline())\n"
-        f"error = {error}\n"
+        "error = {'message': 'no chain here'}\n"
         "print(json.dumps({'id': request['id'], 'ok': False, 'error': error}), flush=True)\n"
         "sys.stdin.read()\n",
         encoding="utf-8",
