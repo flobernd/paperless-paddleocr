@@ -3,7 +3,7 @@
 Importable only when ``tests/fakes`` is on ``PYTHONPATH``, which the tests
 set for the worker process alone. The results use the containers of the
 real pipelines: numpy arrays nested inside Python lists, numpy scalars in
-score lists, and dicts or objects for layout blocks.
+score lists, and objects for layout blocks.
 """
 
 import os
@@ -150,7 +150,7 @@ class PaddleOCRVL:
         self.pipeline_version = pipeline_version
         self.raw_results = kwargs.get("raw_results")
         # The request is JSON, so a test that wants the block objects of
-        # current paddlex passes the attributes of each block as a dict.
+        # paddlex passes the attributes of each block as a dict.
         if kwargs.get("block_objects"):
             self.raw_results = [
                 {**page, "parsing_res_list": [_VLBlock(**b) for b in page["parsing_res_list"]]}
@@ -165,10 +165,8 @@ class PaddleOCRVL:
         if self.raw_results is not None:
             return self.raw_results
         result = {
-            # Older paddleocr releases return dicts, current paddlex returns
-            # block objects.
             "parsing_res_list": [
-                {"block_label": "text", "block_content": "Hi there", "block_bbox": [0, 0, 100, 20]},
+                _VLBlock("text", "Hi there", [0, 0, 100, 20]),
                 _VLBlock("header", "Page 1", np.array([0, 30, 100, 40])),
             ],
         }

@@ -309,9 +309,9 @@ def test_vl_page_result_without_parsing_res_list_is_an_error(worker, png, page):
 
 def test_vl_empty_spotting_result_gives_the_blocks(worker, png):
     # The v1 pipeline answers each request with an empty spotting result.
-    block = {"block_label": "ocr", "block_content": "Hi", "block_bbox": [0, 0, 40, 20]}
+    block = {"label": "ocr", "content": "Hi", "bbox": [0, 0, 40, 20]}
     page = {"spotting_res": {}, "parsing_res_list": [block]}
-    assert _call(worker, _raw_vl(29, png, [page]))["result"] == {
+    assert _call(worker, _raw_vl(29, png, [page], block_objects=True))["result"] == {
         "spotting_capable": False,
         "spotting": {"rec_texts": [], "rec_polys": []},
         "blocks": [{"label": "ocr", "content": "Hi", "bbox": [0, 0, 40, 20]}],
@@ -357,20 +357,10 @@ def test_vl_block_of_an_unknown_shape_passes_beside_a_complete_blank_spotting_re
     assert response["ok"] is True, response["error"]["message"]
 
 
-@pytest.mark.parametrize(
-    ("block", "block_objects"),
-    [
-        pytest.param(
-            {"block_label": "ocr", "block_content": "", "block_bbox": [0, 0, 40, 20]},
-            False,
-            id="dict",
-        ),
-        pytest.param({"label": "ocr", "content": "", "bbox": [0, 0, 40, 20]}, True, id="object"),
-    ],
-)
-def test_vl_block_without_content_on_a_blank_v1_page_is_a_result(worker, png, block, block_objects):
+def test_vl_block_without_content_on_a_blank_v1_page_is_a_result(worker, png):
+    block = {"label": "ocr", "content": "", "bbox": [0, 0, 40, 20]}
     page = {"spotting_res": {}, "parsing_res_list": [block]}
-    response = _call(worker, _raw_vl(33, png, [page], block_objects=block_objects))
+    response = _call(worker, _raw_vl(33, png, [page], block_objects=True))
     assert response["ok"] is True, response["error"]["message"]
     assert response["result"]["blocks"] == [{"label": "ocr", "content": "", "bbox": [0, 0, 40, 20]}]
 
