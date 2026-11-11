@@ -573,8 +573,11 @@ def _ping_worker() -> dict[str, Any]:
         raise MissingDependencyError(
             "The paddle worker cannot run under the worker interpreter "
             f"{worker.worker_interpreter()}: {e}\n"
-            "Install the worker venv as the README describes (Installation), or set "
-            "PAPERLESS_PADDLEOCR_PYTHON to an interpreter that has paddlepaddle and paddleocr.",
+            + _install_hint(
+                "If that interpreter lacks paddlepaddle or paddleocr, install the worker venv "
+                "as the README describes (Installation), or set PAPERLESS_PADDLEOCR_PYTHON to "
+                "an interpreter that has both.",
+            ),
         ) from e
 
 
