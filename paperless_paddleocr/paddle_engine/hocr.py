@@ -105,9 +105,13 @@ def _attr(value: str) -> str:
     return escape(value, {'"': "&quot;"})
 
 
-def _bbox(box: BBox, page: Page) -> str:
-    x0, y0, x1, y1 = clamp_box(box, page.width, page.height)
+def _format_bbox(box: BBox) -> str:
+    x0, y0, x1, y1 = box
     return f"bbox {x0} {y0} {x1} {y1}"
+
+
+def _bbox(box: BBox, page: Page) -> str:
+    return _format_bbox(clamp_box(box, page.width, page.height))
 
 
 def _baseline(line: Line, left: int, bottom: int) -> str:
@@ -152,10 +156,10 @@ def render_hocr(page: Page) -> str:
         )
         for line in block.lines:
             line_no += 1
-            x0, y0, x1, y1 = clamp_box(line.box, page.width, page.height)
+            clamped = clamp_box(line.box, page.width, page.height)
             out.append(
                 f'<span class="ocr_line" id="line_{line_no}" '
-                f'title="bbox {x0} {y0} {x1} {y1}; {_baseline(line, x0, y1)}; '
+                f'title="{_format_bbox(clamped)}; {_baseline(line, clamped[0], clamped[3])}; '
                 f'x_wconf {line.confidence}">',
             )
             last = len(line.words) - 1
