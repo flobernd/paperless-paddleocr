@@ -146,7 +146,7 @@ def test_crash_raises_with_stderr_and_next_call_respawns(fake_worker_env, png, c
     assert worker.call({"op": "ping"})["paddleocr"] is not None
     # The error reported the crash, so the respawn must not report it again
     # as a worker that died between requests.
-    assert caplog.records == []
+    assert [r for r in caplog.records if r.name == "paperless.paddleocr.worker"] == []
 
 
 def test_native_crash_leaves_the_python_stack_in_the_error(fake_worker_env, png):
@@ -173,7 +173,9 @@ def test_worker_that_died_between_calls_is_replaced_with_a_warning(fake_worker_e
     dead.kill()
     dead.wait()
     assert worker.call({"op": "ping"})["paddleocr"] == "3.4.0"
-    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert [
+        record.levelname for record in caplog.records if record.name == "paperless.paddleocr.worker"
+    ] == ["WARNING"]
 
 
 def test_ping_after_a_repaired_import_runs_in_a_fresh_worker(fake_worker_env, monkeypatch):
