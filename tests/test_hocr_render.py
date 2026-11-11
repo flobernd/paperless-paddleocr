@@ -93,8 +93,7 @@ def test_render_gives_a_zero_width_box_one_pixel():
 
 
 def test_render_keeps_one_pixel_for_a_box_past_the_right_edge():
-    # estimate_word_boxes can place the last of six one-character words past
-    # a line box that ends at the page edge.
+    # A spotted word of the VL engine can lie past the right page edge.
     page = _page(_line(Word("x", (1201, 10, 1202, 30), 90)), width=1200, height=1600)
     assert 'title="bbox 1199 10 1200 30' in render_hocr(page)
 

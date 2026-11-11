@@ -89,9 +89,10 @@ def clean_text(text: str) -> str:
 def clamp_box(box: BBox, width: int, height: int) -> BBox:
     """Clamp ``box`` to a ``width`` by ``height`` page, keeping at least one pixel.
 
-    Estimated word boxes can come out zero-width, inverted or past the
-    page edge. ocrmypdf drops a line whose box has a negative coordinate
-    or is inverted, and does not render a line of zero height.
+    An estimated word box can come out zero-width, and an engine can
+    report a box that is inverted or past the page edge. ocrmypdf drops
+    a line whose box has a negative coordinate or is inverted, and does
+    not render a line of zero height.
     """
     x0 = min(max(box[0], 0), width - 1)
     y0 = min(max(box[1], 0), height - 1)
