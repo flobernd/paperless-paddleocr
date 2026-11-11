@@ -36,6 +36,15 @@ if os.environ.get("FAKE_PADDLEPADDLE_FAIL_IMPORT") == "permission":
     sys.modules["paddle.base"] = ModuleType("paddle.base")
     raise PermissionError(13, "Permission denied", "/home/paperless/.cache/paddle")
 
+
+class UnprintableImportError(ImportError):
+    def __str__(self):
+        raise RuntimeError("__str__ failed")
+
+
+if os.environ.get("FAKE_PADDLEPADDLE_FAIL_IMPORT") == "unprintable":
+    raise UnprintableImportError()
+
 # One write from Python and one from native code at import. The native write
 # fails the first response of a worker that imports paddle before it claims
 # stdout. The print does so only under PYTHONUNBUFFERED, which the worker

@@ -7,6 +7,8 @@ score lists, and dicts or objects for layout blocks.
 """
 
 import os
+import resource
+import signal
 import sys
 import time
 
@@ -64,6 +66,12 @@ class PaddleOCR:
             # deadline of the test of a worker that starts after its parent
             # died, so the sleep ends in a kill.
             time.sleep(30)
+        if self.kwargs.get("segfault"):
+            # A worker that dies in native code in the middle of a request, as
+            # on a segfault in PaddlePaddle. The crash is on purpose, and its
+            # core file would land in the working directory of the test run.
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            os.kill(os.getpid(), signal.SIGSEGV)
         if self.kwargs.get("flood_stderr"):
             # More than a pipe buffer holds, so a parent that does not read
             # stderr while it waits for the response stalls the worker.

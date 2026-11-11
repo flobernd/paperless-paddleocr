@@ -153,6 +153,12 @@ def test_crash_raises_with_stderr_and_next_call_respawns(fake_worker_env, png, c
     assert caplog.records == []
 
 
+def test_native_crash_leaves_the_python_stack_in_the_error(fake_worker_env, png):
+    with pytest.raises(worker.PaddleWorkerError) as info:
+        worker.call(_classic(png, segfault=True))
+    assert "Fatal Python error" in str(info.value) and "in predict" in str(info.value)
+
+
 def test_hung_worker_is_killed_and_the_next_call_respawns(fake_worker_env, monkeypatch, png):
     worker.call({"op": "ping"})
     hung = worker._worker.process

@@ -68,12 +68,17 @@ A paddle library that prints to stdout, from Python or from native code,
 would put a stray line into the protocol. Before paddle is imported, the
 worker keeps a private duplicate of the real stdout for its protocol lines
 and points file descriptor 1 and ``sys.stdout`` at stderr.
+
+A crash in native code leaves Python's "Fatal Python error" block with the
+stack of each thread on stderr, which the parent logs and puts into its
+error.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import faulthandler
 import functools
 import importlib
 import inspect
@@ -197,6 +202,15 @@ def _version(module: Any) -> str:
     return str(getattr(module, "__version__", "unknown"))
 
 
+def _error_text(exc: BaseException) -> str:
+    # An exception's __str__ can raise too, and unguarded that would end the
+    # worker at its start-up or in the middle of a request.
+    try:
+        return str(exc)
+    except Exception:
+        return "<str() of the exception failed>"
+
+
 def _import(name: str) -> Any:
     """The module ``name``, or None when its import raises.
 
@@ -208,7 +222,7 @@ def _import(name: str) -> Any:
         return importlib.import_module(name)
     except Exception as exc:
         traceback.print_exc()
-        _IMPORT_ERRORS.setdefault(name, f"{type(exc).__name__}: {exc}")
+        _IMPORT_ERRORS.setdefault(name, f"{type(exc).__name__}: {_error_text(exc)}")
         return None
 
 
@@ -235,7 +249,7 @@ def _ping(request: dict[str, Any]) -> dict[str, Any]:
             result["cuda_devices"] = int(paddle.device.cuda.device_count())
         except Exception as exc:
             traceback.print_exc()
-            result["cuda_error"] = f"{type(exc).__name__}: {exc}"
+            result["cuda_error"] = f"{type(exc).__name__}: {_error_text(exc)}"
     paddleocr = _import("paddleocr")
     if paddleocr is None:
         result["paddleocr_error"] = _IMPORT_ERRORS["paddleocr"]
@@ -412,15 +426,9 @@ def _respond(line: str) -> str:
             {"id": request_id, "ok": True, "result": op(request)}, default=_json_default
         )
     except Exception as exc:
-        # An exception's __str__ can raise too, and unguarded that would end
-        # the worker in the middle of a request.
-        try:
-            message = str(exc)
-        except Exception:
-            message = "<str() of the exception failed>"
         error = {
             "chain": _chain(exc),
-            "message": message,
+            "message": _error_text(exc),
             "traceback": traceback.format_exc(),
         }
         return json.dumps({"id": request_id, "ok": False, "error": error})
@@ -487,8 +495,11 @@ def _parse_arguments() -> argparse.Namespace:
 
 
 def main() -> int:
-    # The signal comes first, so a parent that dies during the slow paddle
-    # import below still takes the worker with it.
+    # Enabled before the paddle import below, so a crash inside that import
+    # leaves a stack too.
+    faulthandler.enable()
+    # The signal comes before the slow paddle import below, so a parent that
+    # dies during that import still takes the worker with it.
     pdeathsig = _die_with_parent()
     parent_pid = _parse_arguments().parent_pid
     # The kernel sends no signal for a parent that died before the prctl
@@ -508,6 +519,12 @@ def main() -> int:
         return 1
     protocol = _claim_stdout()
     _disable_paddle_signal_handler()
+    # The paddle import replaces the handler of the first enable() with
+    # paddle's own for each signal both cover, and dropping paddle's handler
+    # leaves those signals at their default action. enable() alone installs
+    # nothing while faulthandler counts as enabled, so disable() comes first.
+    faulthandler.disable()
+    faulthandler.enable()
     for line in sys.stdin:
         protocol.write(_respond(line) + "\n")
         protocol.flush()
