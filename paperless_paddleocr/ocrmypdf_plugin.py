@@ -533,7 +533,11 @@ def check_options(options: Any) -> None:
                 "PAPERLESS_PADDLEOCR_VL_SERVER_URL env var) to point at a "
                 "paddleocr-genai-vllm-server endpoint.",
             )
-        _probe_vl_server(server_url, resolve_vl_api_key(options))
+        # paperless-ngx runs ocrmypdf with skip_text for a PDF that already
+        # holds text, and such a run sends a page to the server only when that
+        # page has no text.
+        if not getattr(options, "skip_text", False):
+            _probe_vl_server(server_url, resolve_vl_api_key(options))
         return
 
     if engine == "classic-gpu" and ping["cuda_error"] is not None:

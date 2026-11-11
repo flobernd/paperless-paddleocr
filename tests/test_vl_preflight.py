@@ -42,6 +42,7 @@ def _opts() -> types.SimpleNamespace:
         paddle_engine="vl-remote",
         paddle_vl_server_url="http://gpu:8118",
         paddle_vl_api_key="secret",
+        skip_text=False,
     )
 
 
@@ -123,3 +124,23 @@ def test_worker_without_paddleocr_vl_is_a_missing_dependency(monkeypatch):
     with pytest.raises(MissingDependencyError, match="/srv/paddle-venv/bin/python") as info:
         ocrmypdf_plugin.check_options(_opts())
     assert "3.4.0" in str(info.value)
+
+
+def _down(request, timeout=0):
+    raise urllib.error.URLError("connection refused")
+
+
+def test_skip_text_run_passes_while_the_server_is_down(monkeypatch):
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _down)
+    options = _opts()
+    options.skip_text = True
+    ocrmypdf_plugin.check_options(options)
+
+
+def test_skip_text_run_without_a_server_url_names_the_variable(monkeypatch):
+    monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _down)
+    options = _opts()
+    options.skip_text = True
+    options.paddle_vl_server_url = ""
+    with pytest.raises(MissingDependencyError, match="PAPERLESS_PADDLEOCR_VL_SERVER_URL"):
+        ocrmypdf_plugin.check_options(options)

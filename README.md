@@ -364,6 +364,10 @@ Default: `classic-cpu`.
 
 URL of the `paddleocr-genai-vllm-server` endpoint. Required when `PAPERLESS_PADDLEOCR_ENGINE=vl-remote`; ignored otherwise.
 
+The plugin examines the server before the first page of a document. It skips that check when paperless-ngx only converts
+a PDF that already holds text. A page without text in such a PDF still goes to the server, and the document fails at
+that page request if the server is not reachable.
+
 Example: `http://gpu-host:8118`.
 
 Default: *unset*.
