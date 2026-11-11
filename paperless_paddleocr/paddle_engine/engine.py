@@ -17,15 +17,8 @@ from ocrmypdf.pluginspec import OcrEngine, OrientationConfidence
 
 from paperless_paddleocr import DEFAULT_ENGINE, DEFAULT_STRATEGY
 from paperless_paddleocr.languages import PADDLE_NATIVE, TESSERACT_TO_PADDLE
-from paperless_paddleocr.paddle_engine import classic, pdf, vl, worker
+from paperless_paddleocr.paddle_engine import classic, merge, pdf, vl, worker
 from paperless_paddleocr.paddle_engine.hocr import Page, Word, order_page, write_document
-from paperless_paddleocr.paddle_engine.layout import reading_blocks
-from paperless_paddleocr.paddle_engine.merge import (
-    _blocks_to_text,
-    _merged_page,
-    _select,
-    page_words,
-)
 
 log = logging.getLogger("paperless.paddleocr.engine")
 
@@ -45,6 +38,33 @@ _SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
 
 def _variant(options: Any) -> str:
     return getattr(options, "paddle_engine", DEFAULT_ENGINE)
+
+
+def _pass_languages(options: Any) -> list[str]:
+    """The languages that get a pass, in the configured order."""
+    langs = list(getattr(options, "languages", None) or [])
+    if len(langs) <= 1:
+        return langs
+    if getattr(options, "paddle_engine", "") == "vl-remote":
+        # The VL recognition model reads every script in one pass, and the
+        # language code only labels the hOCR. N per-language passes would
+        # send the same slow remote request (tens of seconds per page) N
+        # times for identical results.
+        log.info(
+            "vl-remote is language-agnostic; running one pass instead of %d (%s).",
+            len(langs),
+            "+".join(langs),
+        )
+        return langs[:1]
+    if classic.has_model_option(options):
+        log.info(
+            "A model option is set, so PaddleOCR ignores the language. "
+            "Running one pass instead of %d (%s).",
+            len(langs),
+            "+".join(langs),
+        )
+        return langs[:1]
+    return langs
 
 
 class PaddleOCREngine(OcrEngine):
@@ -110,66 +130,58 @@ class PaddleOCREngine(OcrEngine):
     ) -> None:
         """Write the hOCR and the sidecar text of ``input_file``.
 
-        Single-language input runs one pass. Multi-language input builds one
-        page per language and combines the words of those pages based on the
-        ``paddle_multi_lang_strategy`` option, which the paperless parser sets
-        from ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
+        Single-language input runs one pass. So does input for vl-remote or
+        with a model option set, whose page is labelled with the first
+        language. Other multi-language input builds one page per language and
+        combines those pages based on the ``paddle_multi_lang_strategy``
+        option, which the paperless parser sets from
+        ``PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY``:
 
-        * ``winner`` (default) - keep only the words of the language with the
-          highest aggregate confidence (the sum of its word confidences).
+        * ``winner`` (default) - write the page of the language with the
+          highest aggregate confidence (the sum of its word confidences) as
+          a run of that language alone writes it.
           Faster and more consistent on documents whose pages are single-script.
         * ``merge`` - NMS-merge word boxes from all languages by confidence.
           Right choice for genuinely mixed-script pages.
 
         The first pass that raises fails the document.
         """
-        langs = list(getattr(options, "languages", None) or [])
-        if len(langs) > 1 and getattr(options, "paddle_engine", "") == "vl-remote":
-            # The VL recognition model reads every script in one pass; the
-            # language code only labels the hOCR. N per-language passes would
-            # send the same slow remote request (tens of seconds per page) N
-            # times for identical results.
-            log.info(
-                "vl-remote is language-agnostic; running one pass instead of %d (%s).",
-                len(langs),
-                "+".join(langs),
-            )
-            langs = langs[:1]
+        langs = _pass_languages(options)
         if len(langs) <= 1:
             page = PaddleOCREngine.build_page(input_file, options)
-            write_document(page, output_hocr, output_text, sidecar=order_page(page))
-            return
+        else:
+            strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
+            log.info(
+                "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
+                input_file,
+                len(langs),
+                "+".join(langs),
+                strategy,
+            )
 
-        strategy = getattr(options, "paddle_multi_lang_strategy", DEFAULT_STRATEGY)
-        log.info(
-            "Multi-language PaddleOCR pass on %s: %d languages (%s), strategy=%s",
-            input_file,
-            len(langs),
-            "+".join(langs),
-            strategy,
-        )
+            pages: dict[str, Page] = {}
+            per_lang_words: dict[str, list[Word]] = {}
+            for lang in langs:
+                sub_options = copy.copy(options)
+                sub_options.languages = [lang]
+                try:
+                    page = PaddleOCREngine.build_page(input_file, sub_options)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
+                    ) from e
+                pages[lang] = page
+                per_lang_words[lang] = merge.page_words(page)
 
-        per_lang_words: dict[str, list[Word]] = {}
-        for lang in langs:
-            sub_options = copy.copy(options)
-            sub_options.languages = [lang]
-            try:
-                page = PaddleOCREngine.build_page(input_file, sub_options)
-            except Exception as e:
-                raise RuntimeError(
-                    f"PaddleOCR pass for language {lang!r} failed on {input_file}: {e}",
-                ) from e
-            per_lang_words[lang] = page_words(page)
-
-        merged, primary = _select(strategy, per_lang_words)
-        blocks = reading_blocks(merged, bbox_of=lambda w: w.box)
-        # The adapters size each page from the input image, so any pass gives the page size.
-        write_document(
-            _merged_page(blocks, page.width, page.height, hocr_lang=primary),
-            output_hocr,
-            output_text,
-            sidecar=_blocks_to_text(blocks),
-        )
+            if strategy == "winner":
+                page = pages[merge.winner(per_lang_words)]
+            else:
+                # The adapters size each page from the input image, so any pass
+                # gives the page size.
+                merged, sidecar = merge.merge_page(per_lang_words, page.width, page.height)
+                write_document(merged, output_hocr, output_text, sidecar=sidecar)
+                return
+        write_document(page, output_hocr, output_text, sidecar=order_page(page))
 
     @staticmethod
     def generate_pdf(

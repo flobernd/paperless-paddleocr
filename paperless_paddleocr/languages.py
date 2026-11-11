@@ -377,12 +377,12 @@ def _split_langs(joined: str) -> list[str]:
 
 
 def _warn_multi(codes: list[str]) -> None:
-    """Warn that multi-language OCR multiplies per-page runtime by N."""
+    """Warn that multi-language OCR can run up to one pass per language."""
     logger.warning(
-        "Multi-language OCR active for %d languages (%s). PaddleOCR runs once "
-        "per language and results are merged by confidence - wall-clock time "
-        "scales linearly with the language count. If you only need broad "
-        "script coverage, consider PAPERLESS_PADDLEOCR_LANGUAGE=ml (or "
+        "Multi-language OCR active for %d languages (%s). PaddleOCR runs up to "
+        "one pass per language, so the time of a page can grow with the language "
+        "count. If you only need broad script coverage, consider "
+        "PAPERLESS_PADDLEOCR_LANGUAGE=ml (or "
         "'latin', 'arabic', 'cyrillic', 'devanagari') for a single-pass "
         "multilingual model.",
         len(codes),

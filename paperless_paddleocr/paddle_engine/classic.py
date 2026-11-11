@@ -35,6 +35,25 @@ _MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _model_kwargs(options: Any) -> dict[str, Any]:
+    """The model options of ``options`` that hold a value, as PaddleOCR kwargs."""
+    kwargs: dict[str, Any] = {}
+    for opt_attr, paddle_kw in _MODEL_OPTIONS:
+        value = getattr(options, opt_attr, None)
+        if value:
+            kwargs[paddle_kw] = value
+    return kwargs
+
+
+def has_model_option(options: Any) -> bool:
+    """Whether ``options`` set a model, in which case PaddleOCR ignores the language.
+
+    An empty value counts as unset, because :func:`engine_kwargs` never
+    passes it to PaddleOCR.
+    """
+    return bool(_model_kwargs(options))
+
+
 def _resolve_lang(options: Any) -> str:
     return first_paddle_lang(getattr(options, "languages", None))
 
@@ -72,10 +91,7 @@ def engine_kwargs(options: Any) -> dict[str, Any]:
         # 2026-07-03), so the workaround stays. The GPU path doesn't touch
         # OneDNN, so it is CPU-only.
         kwargs["enable_mkldnn"] = False
-    for opt_attr, paddle_kw in _MODEL_OPTIONS:
-        value = getattr(options, opt_attr, None)
-        if value:
-            kwargs[paddle_kw] = value
+    kwargs.update(_model_kwargs(options))
     log.debug("PaddleOCR(classic) kwargs: %s", kwargs)
     return kwargs
 

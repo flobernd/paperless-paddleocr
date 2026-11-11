@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -104,14 +105,14 @@ def test_merge_leaves_out_a_word_that_is_empty_after_cleaning(tmp_path, monkeypa
         "en": [Word("Cat", (0, 0, 40, 20), 90), Word("\x00", (50, 0, 90, 20), 90)],
         "german": [],
     }
-    out_hocr, _ = _run(tmp_path, monkeypatch, "winner", words_by_lang)
+    out_hocr, _ = _run(tmp_path, monkeypatch, "merge", words_by_lang)
     assert _hocr_words(out_hocr) == ["Cat"]
 
 
 def test_merge_cleans_word_text_before_stripping_it(tmp_path, monkeypatch):
     # The NUL stops strip() from reaching the space until the text is cleaned.
     words_by_lang = {"en": [Word("\x00 Cat\n", (0, 0, 40, 20), 90)], "german": []}
-    out_hocr, _ = _run(tmp_path, monkeypatch, "winner", words_by_lang)
+    out_hocr, _ = _run(tmp_path, monkeypatch, "merge", words_by_lang)
     assert _hocr_words(out_hocr) == ["Cat"]
 
 
@@ -151,7 +152,7 @@ def test_check_options_rejects_unknown_strategy():
         ocrmypdf_plugin.check_options(_opts(paddle_multi_lang_strategy="vote"))
 
 
-def _count_passes(tmp_path, monkeypatch, engine: str) -> int:
+def _passes(tmp_path, monkeypatch, engine: str, **extra: Any) -> list[str]:
     calls: list[str] = []
 
     def fake(input_file, options) -> Page:
@@ -162,17 +163,29 @@ def _count_passes(tmp_path, monkeypatch, engine: str) -> int:
     monkeypatch.setattr(vl, "build_page", fake)
     img = tmp_path / "page.png"
     Image.new("RGB", (200, 100), "white").save(img)
-    options = types.SimpleNamespace(languages=["en", "german"], paddle_engine=engine)
+    options = types.SimpleNamespace(
+        **({"languages": ["en", "german"], "paddle_engine": engine} | extra)
+    )
     PaddleOCREngine.generate_hocr(img, tmp_path / "o.hocr", tmp_path / "o.txt", options)
-    return len(calls)
+    return calls
 
 
 def test_vl_remote_runs_a_single_pass_for_multiple_languages(tmp_path, monkeypatch):
-    assert _count_passes(tmp_path, monkeypatch, "vl-remote") == 1
+    assert _passes(tmp_path, monkeypatch, "vl-remote") == ["en"]
 
 
 def test_classic_still_runs_one_pass_per_language(tmp_path, monkeypatch):
-    assert _count_passes(tmp_path, monkeypatch, "classic-cpu") == 2
+    assert _passes(tmp_path, monkeypatch, "classic-cpu") == ["en", "german"]
+
+
+def test_model_option_runs_a_single_pass_for_multiple_languages(tmp_path, monkeypatch):
+    passes = _passes(tmp_path, monkeypatch, "classic-cpu", paddle_rec_model_dir="/models/rec")
+    assert passes == ["en"]
+
+
+def test_empty_model_option_keeps_one_pass_per_language(tmp_path, monkeypatch):
+    passes = _passes(tmp_path, monkeypatch, "classic-cpu", paddle_rec_model_name="")
+    assert passes == ["en", "german"]
 
 
 def _spaced_page(lang: str) -> Page:
@@ -187,6 +200,42 @@ def test_single_language_keeps_the_engine_sidecar(tmp_path, monkeypatch):
     monkeypatch.setattr(classic, "build_page", lambda input_file, options: _spaced_page("en"))
     _, out_text = _generate(tmp_path, "winner", ["en"])
     assert out_text.read_text(encoding="utf-8") == "a  b"
+
+
+def test_winner_writes_the_line_text_of_the_winning_page(tmp_path, monkeypatch):
+    pages = {
+        "en": Page(width=200, height=100, lang="en", ocr_system="test"),
+        "german": _spaced_page("german"),
+    }
+    monkeypatch.setattr(
+        classic, "build_page", lambda input_file, options: pages[options.languages[0]]
+    )
+    _, out_text = _generate(tmp_path, "winner", ["en", "german"])
+    assert out_text.read_text(encoding="utf-8") == "a  b"
+
+
+def test_winner_orders_the_winning_page_as_a_single_pass_does(tmp_path, monkeypatch):
+    # One row, read B C A. A and B share a bottom edge, so the rows depend on the order
+    # the regions arrive in, and a page ordered twice reads B A C.
+    pages = {
+        "en": Page(
+            width=200,
+            height=100,
+            lang="en",
+            ocr_system="test",
+            blocks=[
+                _region("A", (100, 0, 150, 20)),
+                _region("B", (0, 14, 40, 20)),
+                _region("C", (50, 17, 90, 23)),
+            ],
+        ),
+        "german": Page(width=200, height=100, lang="german", ocr_system="test"),
+    }
+    monkeypatch.setattr(
+        classic, "build_page", lambda input_file, options: pages[options.languages[0]]
+    )
+    _, out_text = _generate(tmp_path, "winner", ["en", "german"])
+    assert out_text.read_text(encoding="utf-8") == "B\nC\nA"
 
 
 def test_merged_hocr_groups_words_into_lines(tmp_path):
