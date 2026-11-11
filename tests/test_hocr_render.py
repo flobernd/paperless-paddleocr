@@ -1,4 +1,7 @@
-"""render_hocr output: fitted baselines, boxes clamped to the page and XML-valid text."""
+"""Tests of clean_text, render_hocr and write_document.
+
+They cover boxes clamped to the page, fitted baselines and XML-valid text.
+"""
 
 from __future__ import annotations
 
@@ -61,11 +64,12 @@ def test_write_document_sidecar_override(tmp_path):
 
 
 def test_render_drops_xml_invalid_characters_from_words():
-    # ocrmypdf parses the hOCR with ElementTree, which rejects a NUL, and a
-    # lone surrogate cannot be encoded as UTF-8.
-    hocr = render_hocr(_page(_line(Word("in\x00voice\ud800", (10, 10, 60, 30), 90))))
+    # ocrmypdf parses the hOCR with ElementTree, which rejects a NUL and
+    # U+FFFE, the code point just past the XML 1.0 range that ends at U+FFFD.
+    # A lone surrogate cannot be encoded as UTF-8.
+    hocr = render_hocr(_page(_line(Word("in\x00voice\ufffe\ud800", (10, 10, 60, 30), 90))))
     ElementTree.fromstring(hocr.encode("utf-8"))
-    assert "invoice" in hocr and "\x00" not in hocr
+    assert "invoice" in hocr and "\x00" not in hocr and "\ufffe" not in hocr
 
 
 def test_clean_text_keeps_xml_valid_characters():
@@ -90,6 +94,11 @@ def test_render_clamps_a_box_outside_the_page():
 def test_render_gives_a_zero_width_box_one_pixel():
     page = _page(_line(Word("x", (50, 10, 50, 30), 90)))
     assert 'title="bbox 50 10 51 30' in render_hocr(page)
+
+
+def test_render_gives_a_zero_height_box_one_pixel():
+    page = _page(_line(Word("x", (50, 10, 60, 10), 90)))
+    assert 'title="bbox 50 10 60 11' in render_hocr(page)
 
 
 def test_render_keeps_one_pixel_for_a_box_past_the_right_edge():
