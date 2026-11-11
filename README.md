@@ -412,11 +412,13 @@ Default: `v1.5`.
 
 How to combine results when `PAPERLESS_OCR_LANGUAGE` lists more than one language:
 
-- `winner` (default) - run each language pass, pick the one with the highest aggregate word confidence, and use its
-  words. Faster and more consistent for documents whose pages are single-script.
+- `winner` (default) - run each language pass, pick the one with the highest aggregate word confidence, and write its
+  page as a run of that language alone writes it. Faster and more consistent for documents whose pages are
+  single-script.
 - `merge` - NMS-merge word boxes from all language passes by confidence. Right choice for genuinely mixed-script pages.
 
-Single-language input ignores this setting (there's only one pass to run).
+The setting has nothing to combine where one pass runs: for a single language, for `vl-remote`, and with a model name or
+directory set (see [Choosing classic-pipeline models](#choosing-classic-pipeline-models)).
 
 Default: `winner`.
 
@@ -514,10 +516,12 @@ PaddleOCR uses different language codes from Tesseract and runs a single languag
    full table is in [`paperless_paddleocr/languages.py`](paperless_paddleocr/languages.py).
 2. **Multi-language combination** - when more than one code remains after mapping, the plugin runs PaddleOCR once per
    language and combines the results according to `PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY`. The default `winner` picks
-   the language whose pass has the highest aggregate confidence and uses its words. `merge` runs an NMS over word boxes
-   from every pass and keeps the highest-confidence box per location. Either way, per-page wall time scales linearly
-   with the number of languages because each pass still runs. If one language pass fails, the document fails with an
-   error that names the language.
+   the language whose pass has the highest aggregate confidence and writes the page of that pass as a run of that
+   language alone writes it. `merge` runs an NMS over word boxes from every pass and keeps the highest-confidence box
+   per location. Either way, per-page wall time scales linearly with the number of languages. The plugin runs one pass
+   instead, labelled with the first language, with `vl-remote` and with a model name or directory set: the VL model
+   reads every script, and a set model makes PaddleOCR ignore the language. If one language pass fails, the document
+   fails with an error that names the language.
 
 If you need broad multi-script coverage without paying that cost, set `PAPERLESS_PADDLEOCR_LANGUAGE` to one of the bundled
 multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
@@ -530,9 +534,11 @@ multilingual models: `ml`, `latin`, `arabic`, `cyrillic`, `devanagari`.
 
 ## Performance notes
 
-- **Multi-language combination is `N×` slower** than single-language: every pass still runs. Use `PAPERLESS_PADDLEOCR_LANGUAGE=ml`
-  for a single-pass multi-script model when accuracy on each individual language matters less than throughput. The choice of
-  `winner` vs `merge` doesn't change OCR cost - only how the per-language words are combined afterwards.
+- **Multi-language combination is `N×` slower** than single-language: every pass runs. With `vl-remote` or with a model
+  name or directory set, the plugin runs one pass and labels the page with the first language, at the cost of a
+  single-language run. Use `PAPERLESS_PADDLEOCR_LANGUAGE=ml` for a single-pass multi-script model when accuracy on each
+  individual language matters less than throughput. The choice of `winner` vs `merge` doesn't change OCR cost - only
+  how the per-language results are combined afterwards.
 - **`vl-remote` engine** is much more accurate on small fonts, low-DPI scans, and handwritten text - but it requires a separate
   GPU host running `paddleocr-genai-vllm-server`. Per-page latency depends on the server GPU; expect tens of seconds per page
   depending on the GPU.
@@ -569,7 +575,8 @@ declared in the directory's `inference.yml`.
 
 > [!NOTE]
 > As soon as any model name or directory is set, PaddleOCR stops deriving models from the configured language (it
-> logs a warning saying `lang` is ignored). Pick models that cover your documents' language and script yourself.
+> logs a warning saying `lang` is ignored). Pick models that cover your documents' language and script yourself. With
+> more than one language configured, the plugin then runs one pass and labels the page with the first language.
 
 ## Troubleshooting
 

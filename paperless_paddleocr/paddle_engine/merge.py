@@ -1,14 +1,15 @@
 """The choice and the merge of the pages that the language passes give.
 
 When :class:`~paperless_paddleocr.paddle_engine.PaddleOCREngine` runs one pass
-per language, the ``winner`` strategy keeps the words of the pass with the
-highest aggregate confidence, and ``merge`` keeps the word boxes of all passes
-that survive an NMS by confidence. :func:`_merged_page` builds the page of the
-hOCR from the words that remain.
+per language, the ``winner`` strategy picks the pass with the highest aggregate
+confidence, whose page the engine writes as it stands, and ``merge`` keeps the
+word boxes of all passes that survive an NMS by confidence. :func:`_merged_page`
+builds the page of the hOCR from the words that remain.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 
 from paperless_paddleocr.paddle_engine.geometry import BBox, union_boxes
@@ -36,14 +37,18 @@ _NMS_BAND_PX = 32
 def page_words(page: Page) -> list[Word]:
     """Every word of ``page`` that has text, in the block order of the single-language hOCR.
 
-    ``page.blocks`` is left in that order. The merge sorts stably, so the
-    word order decides its ties. Boxes are clamped to the page and texts
-    cleaned and stripped here, ahead of the merge, because the merged lines
-    derive their boxes, baselines and word spacing from these words.
+    The words come from an ordered copy, so ``page`` keeps the order of its
+    regions: the winning page is ordered at its write, and a second ordering
+    can build other rows from regions that share a bottom edge. The merge
+    sorts stably, so the word order decides its ties. Boxes are clamped to
+    the page and texts cleaned and stripped here, ahead of the merge,
+    because the merged lines derive their boxes, baselines and word spacing
+    from these words.
     """
-    order_page(page)
+    ordered = copy.copy(page)
+    order_page(ordered)
     words: list[Word] = []
-    for block in page.blocks:
+    for block in ordered.blocks:
         for line in block.lines:
             for word in line.words:
                 text = clean_text(word.text).strip()
@@ -53,26 +58,28 @@ def page_words(page: Page) -> list[Word]:
     return words
 
 
-def _select(
-    strategy: str,
-    per_lang_words: dict[str, list[Word]],
-) -> tuple[list[Word], str]:
-    """Words to emit, and the language the merged hOCR is labelled with."""
-    if strategy == "winner":
-        by_lang_conf = {
-            lang: sum(w.confidence for w in words) for lang, words in per_lang_words.items()
-        }
-        winner_lang = max(by_lang_conf, key=lambda k: by_lang_conf[k])
-        merged = per_lang_words[winner_lang]
-        log.info(
-            "multi-lang winner: %s (score=%d, %d words). Other scores: %s",
-            winner_lang,
-            by_lang_conf[winner_lang],
-            len(merged),
-            {lang: s for lang, s in by_lang_conf.items() if lang != winner_lang},
-        )
-        return merged, winner_lang
+def winner(per_lang_words: dict[str, list[Word]]) -> str:
+    """The language whose words have the highest sum of confidences."""
+    by_lang_conf = {
+        lang: sum(w.confidence for w in words) for lang, words in per_lang_words.items()
+    }
+    winner_lang = max(by_lang_conf, key=lambda k: by_lang_conf[k])
+    log.info(
+        "multi-lang winner: %s (score=%d, %d words). Other scores: %s",
+        winner_lang,
+        by_lang_conf[winner_lang],
+        len(per_lang_words[winner_lang]),
+        {lang: s for lang, s in by_lang_conf.items() if lang != winner_lang},
+    )
+    return winner_lang
 
+
+def merge_page(
+    per_lang_words: dict[str, list[Word]],
+    width: int,
+    height: int,
+) -> tuple[Page, str]:
+    """The page and the sidecar of the NMS merge, labelled with the first language."""
     flat = [w for words in per_lang_words.values() for w in words]
     merged = _nms_merge(flat, _NMS_IOU_THRESHOLD)
     log.debug(
@@ -81,7 +88,9 @@ def _select(
         len(per_lang_words),
         len(merged),
     )
-    return merged, next(iter(per_lang_words))
+    blocks = reading_blocks(merged, bbox_of=lambda w: w.box)
+    page = _merged_page(blocks, width, height, hocr_lang=next(iter(per_lang_words)))
+    return page, _blocks_to_text(blocks)
 
 
 def _iou(a: BBox, b: BBox) -> float:
