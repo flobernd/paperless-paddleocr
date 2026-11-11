@@ -141,7 +141,8 @@ def render_hocr(page: Page) -> str:
         '<meta name="ocr-capabilities" content="ocr_page ocr_carea ocr_par ocr_line ocrx_word" />',
         "</head>",
         "<body>",
-        f'<div class="ocr_page" id="page_1" title="bbox 0 0 {page.width} {page.height}">',
+        '<div class="ocr_page" id="page_1" '
+        f'title="{_format_bbox((0, 0, page.width, page.height))}">',
     ]
 
     word_no = 0
