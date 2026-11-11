@@ -102,9 +102,11 @@ def _probe_vl_server(server_url: str, api_key: str) -> None:
         )
     except (OSError, http.client.HTTPException, ValueError) as e:
         # urllib lets http.client errors such as BadStatusLine through
-        # unwrapped, and they are no OSError.
+        # unwrapped, and they are no OSError. The text of a BadStatusLine is
+        # the raw line of the peer, line ends included, and repr escapes them.
+        cause = repr(e) if isinstance(e, http.client.BadStatusLine) else getattr(e, "reason", e)
         raise MissingDependencyError(
-            f"The PaddleOCR-VL server at {base} is not reachable ({getattr(e, 'reason', e)}). "
+            f"The PaddleOCR-VL server at {base} is not reachable ({cause}). "
             "Check PAPERLESS_PADDLEOCR_VL_SERVER_URL and that the "
             "paddleocr-genai-vllm-server container is running.",
         ) from e

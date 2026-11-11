@@ -85,8 +85,9 @@ def test_non_http_answer_raises_actionable_error(monkeypatch):
         raise http.client.BadStatusLine("SSH-2.0-OpenSSH_9.6\r\n")
 
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", ssh_banner)
-    with pytest.raises(MissingDependencyError, match="not reachable"):
+    with pytest.raises(MissingDependencyError, match="not reachable") as info:
         ocrmypdf_plugin._probe_vl_server("http://gpu:22", "")
+    assert "\r" not in str(info.value) and "\n" not in str(info.value)
 
 
 def test_auth_failure_raises_actionable_error(monkeypatch):
