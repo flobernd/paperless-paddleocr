@@ -113,13 +113,14 @@ def check_parser_contract() -> None:
         png = tmp / "page.png"
         Image.new("RGB", (300, 300), "white").save(png, dpi=(72, 72))
 
-        def build() -> dict:
+        def build(**kwargs: bool) -> dict:
             with PaperlessPaddleParser() as parser:
                 return parser.construct_ocrmypdf_parameters(
                     png,
                     "image/png",
                     tmp / "out.pdf",
                     tmp / "sidecar.txt",
+                    **kwargs,
                 )
 
         args = build()
@@ -145,6 +146,10 @@ def check_parser_contract() -> None:
         _expect(args, "paddle_engine", "classic-cpu")
         _expect(args, "plugins", [module])
         _ok("user args keep precedence, except for the API key and the engine")
+
+        args = build(skip_text=True)
+        _expect(args, "skip_text", True)
+        _ok("builder hands its keywords to the upstream builder")
 
         user_args = '{"plugins": ["paperless_paddleocr.ocrmypdf_plugin", "other_plugin"]}'
         with override_settings(OCR_USER_ARGS=user_args):

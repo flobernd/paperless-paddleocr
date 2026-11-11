@@ -41,8 +41,8 @@ from paperless_paddleocr.languages import resolve_paddle_languages
 
 logger = logging.getLogger("paperless.parsing.paddleocr")
 
-_BUILDER_HOOK_PRESENT: Final[bool] = "construct_ocrmypdf_parameters" in vars(
-    RasterisedDocumentParser,
+_BUILDER_HOOK_PRESENT: Final[bool] = hasattr(
+    RasterisedDocumentParser, "construct_ocrmypdf_parameters"
 )
 _BUILDER_HOOK_MISSING: Final[str] = (
     "paperless-ngx's RasterisedDocumentParser no longer defines "
@@ -133,17 +133,17 @@ class PaperlessPaddleParser(RasterisedDocumentParser):
         mime_type: str,
         output_file: Path,
         sidecar_file: Path,
-        *,
-        safe_fallback: bool = False,
-        skip_text: bool = False,
+        **kwargs: Any,
     ) -> dict[str, Any]:
+        # A later paperless-ngx release can add a keyword to its call of the
+        # builder. The keyword reaches the parent's builder unchanged, and a
+        # list of named keywords here would raise TypeError for each document.
         args: dict[str, Any] = super().construct_ocrmypdf_parameters(
             input_file,
             mime_type,
             output_file,
             sidecar_file,
-            safe_fallback=safe_fallback,
-            skip_text=skip_text,
+            **kwargs,
         )
 
         args["plugins"] = [_OCRMYPDF_PLUGIN_MODULE, *_user_plugins(args.get("plugins"))]
