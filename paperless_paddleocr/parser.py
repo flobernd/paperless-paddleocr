@@ -79,6 +79,13 @@ def _user_plugins(value: Any) -> list[Any]:
     return [item for item in items if str(item) != _OCRMYPDF_PLUGIN_MODULE]
 
 
+def _is_remote_engine() -> bool:
+    try:
+        return engine_from_env() == "vl-remote"
+    except ValueError:
+        return False
+
+
 class PaperlessPaddleParser(RasterisedDocumentParser):
     """OCR parser using PaddleOCR via ocrmypdf (drop-in for the Tesseract parser)."""
 
@@ -87,8 +94,12 @@ class PaperlessPaddleParser(RasterisedDocumentParser):
     author: str = "Florian Bernd"
     url: str = "https://github.com/flobernd/paperless-paddleocr"
     # The registry reads this flag on the class, so the engine variable sets it
-    # at import. The builder forces the same engine onto each ocrmypdf run.
-    uses_remote_service: bool = engine_from_env() == "vl-remote"
+    # at import. The builder forces the same engine onto each ocrmypdf run. An
+    # unknown value raises at construction and not at import: the registry logs
+    # a failed import once and then gives each document to Tesseract, whereas a
+    # failed construction fails each document with an error that names the
+    # variable.
+    uses_remote_service: bool = _is_remote_engine()
 
     @classmethod
     def score(
@@ -103,15 +114,16 @@ class PaperlessPaddleParser(RasterisedDocumentParser):
         return env_int("PAPERLESS_PADDLEOCR_SCORE", default=15)
 
     def __init__(self, logging_group: object | None = None) -> None:
-        # Raised before the parent creates its scratch directory, which no
-        # __exit__ would remove after a failed construction.
+        # The guard and the engine read raise before the parent creates its
+        # scratch directory, which no __exit__ would remove after a failed
+        # construction.
         if not _BUILDER_HOOK_PRESENT:
             raise RuntimeError(_BUILDER_HOOK_MISSING)
+        self._engine: str = engine_from_env()
         super().__init__(logging_group)
         self.log = logger
 
         # Plugin-specific env vars, read once per parser instance.
-        self._engine: str = engine_from_env()
         self._strategy: str = env_choice(
             "PAPERLESS_PADDLEOCR_MULTI_LANG_STRATEGY",
             STRATEGY_CHOICES,

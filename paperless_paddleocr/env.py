@@ -21,7 +21,7 @@ def env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        log.warning("Invalid integer value for %s=%r; using default %d.", name, raw, default)
+        log.warning("Invalid integer value for %s=%r. Using the default %d.", name, raw, default)
         return default
 
 
@@ -37,7 +37,7 @@ def env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
     value = raw.lower()
     if value not in choices:
         log.warning(
-            "Invalid value for %s=%r; valid choices are %s. Using default %r.",
+            "Invalid value for %s=%r. Valid choices are %s. Using the default %r.",
             name,
             raw,
             choices,
@@ -48,4 +48,19 @@ def env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
 
 
 def engine_from_env() -> str:
-    return env_choice("PAPERLESS_PADDLEOCR_ENGINE", ENGINE_CHOICES, DEFAULT_ENGINE)
+    """Read ``PAPERLESS_PADDLEOCR_ENGINE``, raising ``ValueError`` for an unknown value.
+
+    A fallback to the default would run local OCR for a mistyped
+    ``vl-remote``. The ocrmypdf plugin rejects the same value among its
+    options.
+    """
+    raw = os.environ.get("PAPERLESS_PADDLEOCR_ENGINE", "").strip()
+    if not raw:
+        return DEFAULT_ENGINE
+    value = raw.lower()
+    if value not in ENGINE_CHOICES:
+        raise ValueError(
+            f"Invalid value for PAPERLESS_PADDLEOCR_ENGINE={raw!r}. Valid values are "
+            f"{', '.join(ENGINE_CHOICES[:-1])} and {ENGINE_CHOICES[-1]}.",
+        )
+    return value

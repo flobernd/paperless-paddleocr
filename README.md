@@ -261,6 +261,9 @@ Selects the PaddleOCR engine variant:
   returns, and no layout model runs on the paperless side. Higher accuracy on small fonts, low-DPI scans, and
   handwritten text.
 
+A value other than these three fails each document with an error that names the variable and the valid values. A blank
+value counts as unset.
+
 Default: `classic-cpu`.
 
 ### `PAPERLESS_PADDLEOCR_VL_SERVER_URL`
