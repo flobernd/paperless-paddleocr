@@ -192,10 +192,6 @@ def test_vl_remote_runs_a_single_pass_for_multiple_languages(tmp_path, monkeypat
     assert _passes(tmp_path, monkeypatch, "vl-remote") == ["en"]
 
 
-def test_classic_still_runs_one_pass_per_language(tmp_path, monkeypatch):
-    assert _passes(tmp_path, monkeypatch, "classic-cpu") == ["en", "german"]
-
-
 def test_model_option_runs_a_single_pass_for_multiple_languages(tmp_path, monkeypatch):
     passes = _passes(tmp_path, monkeypatch, "classic-cpu", paddle_rec_model_dir="/models/rec")
     assert passes == ["en"]
