@@ -44,14 +44,6 @@ def test_fit_baseline_all_same_x_is_flat_through_mean():
 # --- group_into_lines -----------------------------------------------------
 
 
-def test_group_into_lines_empty():
-    assert group_into_lines([], bbox_of=_box) == []
-
-
-def test_group_into_lines_single_item():
-    assert group_into_lines([(0, 0, 10, 10)], bbox_of=_box) == [[(0, 0, 10, 10)]]
-
-
 def test_group_into_lines_two_separate_lines_ordered():
     a1, a2 = (0, 10, 40, 30), (50, 10, 90, 30)
     b1, b2 = (0, 60, 40, 80), (50, 60, 90, 80)

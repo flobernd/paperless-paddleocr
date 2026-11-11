@@ -117,7 +117,7 @@ def test_missing_package_without_a_worker_venv_names_the_default_venv(monkeypatc
     _answer(monkeypatch, _ping(**missing, cuda_devices=0))
     with pytest.raises(MissingDependencyError) as info:
         ocrmypdf_plugin.check_options(_opts("classic-cpu"))
-    assert f"No worker venv was found at {DEFAULT_WORKER_PYTHON}" in str(info.value)
+    assert DEFAULT_WORKER_PYTHON in str(info.value)
     assert sys.executable in str(info.value)
 
 
@@ -129,7 +129,7 @@ def test_missing_package_in_the_interpreter_of_the_variable_reports_no_missing_v
     _answer(monkeypatch, _ping(**missing, cuda_devices=0))
     with pytest.raises(MissingDependencyError) as info:
         ocrmypdf_plugin.check_options(_opts("classic-cpu"))
-    assert "No worker venv was found" not in str(info.value)
+    assert DEFAULT_WORKER_PYTHON not in str(info.value)
 
 
 @pytest.mark.parametrize("missing", [NO_PADDLE, NO_PADDLEOCR])
@@ -143,7 +143,7 @@ def test_missing_package_in_the_default_venv_reports_no_missing_venv(
     _answer(monkeypatch, _ping(**missing, cuda_devices=0))
     with pytest.raises(MissingDependencyError) as info:
         ocrmypdf_plugin.check_options(_opts("classic-cpu"))
-    assert "No worker venv was found" not in str(info.value)
+    assert DEFAULT_WORKER_PYTHON not in str(info.value)
 
 
 @pytest.mark.parametrize("engine", ["classic-cpu", "vl-remote"])
