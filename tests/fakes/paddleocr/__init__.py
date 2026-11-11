@@ -6,6 +6,7 @@ real pipelines: numpy arrays nested inside Python lists, numpy scalars in
 score lists, and objects for layout blocks.
 """
 
+import json
 import os
 import resource
 import signal
@@ -198,4 +199,8 @@ class DocImgOrientationClassification:
         _record_construction("DocImgOrientationClassification")
 
     def predict(self, image):
+        # The orientation op takes no model arguments, so the raw prediction a
+        # test chooses comes through the environment.
+        if "FAKE_ORIENTATION_RESULT" in os.environ:
+            return json.loads(os.environ["FAKE_ORIENTATION_RESULT"])
         return [{"label_names": ["90"], "scores": [0.97]}]

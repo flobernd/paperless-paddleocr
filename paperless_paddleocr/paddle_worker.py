@@ -56,7 +56,8 @@ A page without text still gives one page result with the fields the parent
 needs, so a result of another shape is an error response that names what is
 missing and the paddleocr version: a prediction without a page result, a
 classic page result without ``rec_polys``, ``rec_scores`` or ``rec_texts``
-or with lists of different lengths, a VL page result without
+or with lists of different lengths, an orientation result without
+``label_names`` or ``scores``, a VL page result without
 ``parsing_res_list``, a spotting result whose two lists differ in length,
 or a layout block of an unknown shape on a page whose spotting result is
 missing or lacks ``rec_texts`` or ``rec_polys``.
@@ -172,9 +173,9 @@ def _unexpected_result(subject: str, problem: str) -> RuntimeError:
     )
 
 
-def _page_result(results: Any, pipeline: str) -> Any:
+def _page_result(results: Any, subject: str) -> Any:
     if len(results) == 0:
-        raise _unexpected_result(f"{pipeline} pipeline", "returned no page result")
+        raise _unexpected_result(subject, "returned no page result")
     return results[0]
 
 
@@ -268,7 +269,7 @@ def _classic(request: dict[str, Any]) -> dict[str, Any]:
     engine = _classic_engine(json.dumps(request["kwargs"], sort_keys=True))
     # Sub-word tokens and their boxes come only with return_word_box. The
     # parent joins them back into words with exact boxes.
-    page = _page_result(engine.predict(request["image"], return_word_box=True), "classic")
+    page = _page_result(engine.predict(request["image"], return_word_box=True), "classic pipeline")
     regions = {
         key: _required_field(page, key, "classic page result") for key in _CLASSIC_REGION_FIELDS
     }
@@ -326,7 +327,7 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
             use_queues=False,
             prompt_label="spotting" if spotting_capable else "ocr",
         ),
-        "PaddleOCR-VL",
+        "PaddleOCR-VL pipeline",
     )
 
     blocks = _required_field(page, "parsing_res_list", "PaddleOCR-VL page result")
@@ -358,15 +359,10 @@ def _vl(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def _orientation(request: dict[str, Any]) -> dict[str, Any]:
-    data = _orientation_model().predict(request["image"])[0]
-    labels = _list_field(data, "label_names")
-    scores = _list_field(data, "scores")
-    # Either field can be a numpy array, which has no truth value for more
-    # than one element.
-    return {
-        "label": str(labels[0]) if len(labels) > 0 else "0",
-        "score": float(scores[0]) if len(scores) > 0 else 0.0,
-    }
+    data = _page_result(_orientation_model().predict(request["image"]), "orientation model")
+    labels = _required_field(data, "label_names", "orientation result")
+    scores = _required_field(data, "scores", "orientation result")
+    return {"label": str(labels[0]), "score": float(scores[0])}
 
 
 _OPS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
