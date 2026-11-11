@@ -25,8 +25,8 @@ def _bars_image(tmp_path, rotate_by: float, size=(800, 600)):
     return path
 
 
-def test_straight_page_reports_near_zero(tmp_path):
-    assert abs(estimate_skew(_bars_image(tmp_path, 0.0))) <= 0.2
+def test_straight_page_reports_zero(tmp_path):
+    assert estimate_skew(_bars_image(tmp_path, 0.0)) == 0.0
 
 
 def test_clockwise_skew_needs_positive_correction(tmp_path):
@@ -54,3 +54,9 @@ def test_fine_pass_finds_the_true_angle_inside_the_coarse_cell(tmp_path):
     # test uses a larger page.
     page = _bars_image(tmp_path, -1.3, size=(2500, 1800))
     assert estimate_skew(page) == pytest.approx(1.3, abs=0.05)
+
+
+def test_blank_page_reports_zero(tmp_path):
+    path = tmp_path / "blank.png"
+    Image.new("L", (800, 600), 255).save(path)
+    assert estimate_skew(path) == 0.0
