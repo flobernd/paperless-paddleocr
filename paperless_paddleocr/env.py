@@ -58,7 +58,7 @@ def engine_from_env() -> str:
     ``vl-remote``. The ocrmypdf plugin rejects the same value among its
     options.
     """
-    raw = os.environ.get("PAPERLESS_PADDLEOCR_ENGINE", "").strip()
+    raw = env_str("PAPERLESS_PADDLEOCR_ENGINE")
     if not raw:
         return DEFAULT_ENGINE
     value = raw.lower()
