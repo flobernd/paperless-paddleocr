@@ -168,7 +168,7 @@ TESSERACT_TO_PADDLE: Final[dict[str, str]] = {
     "isl": "is",
     "ita": "it",
     "jpn": "japan",
-    "kat": "ka",
+    "kan": "ka",
     "kaz": "kk",
     "kir": "ky",
     "kmr": "ku",
@@ -265,12 +265,16 @@ def normalize_paddle_lang(code: str) -> str | None:
 # to_hocr_lang renders a PaddleOCR code as its rename below, else as itself
 # when it is a two-letter member of PADDLE_VALID_LANGS, else as BCP-47 "und".
 # Longer codes stay "und" because they do not reliably match ISO 639:
-# PaddleOCR's mah is Magahi, and ISO 639-2 mah is Marshallese.
+# PaddleOCR's mah is Magahi, and ISO 639-2 mah is Marshallese. A two-letter
+# code that names another language in BCP-47 needs a rename: PaddleOCR's ka
+# is Kannada, and BCP-47 ka is Georgian.
 _BCP47_RENAMES: Final[dict[str, str]] = {
     "ch": "zh",
     "chinese_cht": "zh",
+    "french": "fr",
     "german": "de",
     "japan": "ja",
+    "ka": "kn",
     "korean": "ko",
     "rs_cyrillic": "sr",
     "rs_latin": "sr",
@@ -360,8 +364,16 @@ def resolve_paddle_languages(
 
 
 def _split_langs(joined: str) -> list[str]:
-    """Split a ``+``-separated language string, dropping empty and repeated entries."""
-    return list(dict.fromkeys(part.strip() for part in joined.split("+") if part.strip()))
+    """Split a ``+``-separated language string, dropping empty and repeated entries.
+
+    Entries that differ in case only count as repeated, and the first spelling is kept.
+    """
+    first_spelling: dict[str, str] = {}
+    for part in joined.split("+"):
+        code = part.strip()
+        if code:
+            first_spelling.setdefault(code.lower(), code)
+    return list(first_spelling.values())
 
 
 def _warn_multi(codes: list[str]) -> None:
