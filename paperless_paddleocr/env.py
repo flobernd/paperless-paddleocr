@@ -29,17 +29,23 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
-def env_choice(name: str, choices: tuple[str, ...], default: str) -> str:
+def env_choice(name: str, choices: tuple[str, ...], default: str, *, strict: bool = False) -> str:
     """Read ``name`` as one of ``choices``, falling back to ``default``.
 
     The value is stripped and lower-cased before the comparison, so a
-    mixed-case entry in ``choices`` never matches.
+    mixed-case entry in ``choices`` never matches. With ``strict``, a value
+    outside ``choices`` raises ``ValueError`` instead of falling back.
     """
     raw = env_str(name)
     if not raw:
         return default
     value = raw.lower()
     if value not in choices:
+        if strict:
+            raise ValueError(
+                f"Invalid value for {name}={raw!r}. Valid values are "
+                f"{', '.join(choices[:-1])} and {choices[-1]}.",
+            )
         log.warning(
             "Invalid value for %s=%r. Valid choices are %s. Using the default %r.",
             name,
@@ -58,13 +64,4 @@ def engine_from_env() -> str:
     ``vl-remote``. The ocrmypdf plugin rejects the same value among its
     options.
     """
-    raw = env_str("PAPERLESS_PADDLEOCR_ENGINE")
-    if not raw:
-        return DEFAULT_ENGINE
-    value = raw.lower()
-    if value not in ENGINE_CHOICES:
-        raise ValueError(
-            f"Invalid value for PAPERLESS_PADDLEOCR_ENGINE={raw!r}. Valid values are "
-            f"{', '.join(ENGINE_CHOICES[:-1])} and {ENGINE_CHOICES[-1]}.",
-        )
-    return value
+    return env_choice("PAPERLESS_PADDLEOCR_ENGINE", ENGINE_CHOICES, DEFAULT_ENGINE, strict=True)
