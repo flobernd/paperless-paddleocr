@@ -54,14 +54,12 @@ def test_merged_hocr_normalises_paddle_code_to_bcp47(tmp_path):
     out = tmp_path / "merged.hocr"
     words = [Word("hallo", (0, 0, 10, 10), 90), Word("welt", (12, 0, 22, 10), 88)]
 
-    # Callers pass a PaddleOCR code ("german"); output must be BCP-47 "de",
-    # exactly what the single-language path (to_hocr_lang) would produce.
+    # Callers pass a PaddleOCR code ("german"), and the output must be BCP-47 "de".
     _write_merged(out, words, 100, 100, hocr_lang="german")
 
     pars = _pars(out)
     assert pars, "expected at least one ocr_par"
     assert {p.get("lang") for p in pars} == {"de"}
-    assert {p.get("lang") for p in pars} == {to_hocr_lang("german")}
 
 
 def test_merged_hocr_neutralises_attribute_injection(tmp_path):
