@@ -35,6 +35,9 @@ status and the last stderr lines, spawns a fresh worker and sends the request
 there. A worker that dies with a request in flight fails that call as above,
 and the request is not retried.
 
+``ping`` also stops a worker whose answer reports paddle or paddleocr
+missing, so the next ping runs in a fresh interpreter.
+
 A request can carry a secret, such as the VL API key among the kwargs, so the
 log and the error messages show at most the op and the id of a request, never
 its content.
@@ -399,16 +402,23 @@ def ping() -> dict[str, Any]:
     """The worker's answer to a ``ping`` request, asked once per process.
 
     An answer that reports paddle or paddleocr missing is not kept, and
-    neither is a failed call, so a later call asks again once the operator
-    repaired the worker venv. Raises ``PaddleWorkerError`` as :func:`call`
-    does.
+    neither is a failed call. ``ping`` stops the worker after such an
+    answer, because a package that failed half-way through its import fails
+    again in the same interpreter with an error that hides the cause.
+    Raises ``PaddleWorkerError`` as :func:`call` does.
     """
-    global _ping_result
+    global _ping_result, _worker
     if _ping_result is not None:
         return _ping_result
     result = call({"op": "ping"})
     if result["paddle"] is not None and result["paddleocr"] is not None:
         _ping_result = result
+    else:
+        with _lock:
+            stale = _worker
+            _worker = None
+            if stale is not None:
+                stale.stop()
     return result
 
 

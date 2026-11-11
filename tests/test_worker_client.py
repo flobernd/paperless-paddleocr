@@ -181,6 +181,23 @@ def test_worker_that_died_between_calls_is_replaced_with_a_warning(fake_worker_e
     assert [record.levelname for record in caplog.records] == ["WARNING"]
 
 
+def test_ping_after_a_repaired_import_runs_in_a_fresh_worker(fake_worker_env, monkeypatch):
+    monkeypatch.setattr(worker, "_ping_result", None)
+    monkeypatch.setenv("FAKE_PADDLEPADDLE_FAIL_IMPORT", "1")
+    assert worker.ping()["paddle"] is None
+    monkeypatch.delenv("FAKE_PADDLEPADDLE_FAIL_IMPORT")
+    assert worker.ping()["paddle"] == "3.2.1"
+
+
+def test_ping_that_keeps_no_answer_stops_its_worker(fake_worker_env, monkeypatch):
+    monkeypatch.setattr(worker, "_ping_result", None)
+    monkeypatch.setenv("FAKE_PADDLEPADDLE_FAIL_IMPORT", "1")
+    worker.call({"op": "ping"})
+    stale = worker._worker.process
+    assert worker.ping()["paddle"] is None
+    assert stale.returncode == -signal.SIGKILL
+
+
 def test_worker_that_stops_reading_after_the_check_fails_the_call_with_the_worker_error(
     fake_worker_env, monkeypatch, tmp_path
 ):
