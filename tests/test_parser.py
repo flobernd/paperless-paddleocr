@@ -71,3 +71,16 @@ def test_host_major_above_the_tested_one_logs_one_warning(load_parser, caplog, v
     load_parser(version=version)
     logged = [r.levelname for r in caplog.records if r.name == "paperless.parsing.paddleocr"]
     assert logged == levels
+
+
+def test_unknown_engine_value_fails_the_construction(load_parser):
+    parser = load_parser(engine="vl-remot")
+    with pytest.raises(ValueError, match="PAPERLESS_PADDLEOCR_ENGINE"):
+        parser.PaperlessPaddleParser()
+
+
+@pytest.mark.parametrize(("value", "remote"), [("  ", False), (" VL-Remote ", True)])
+def test_blank_or_differently_cased_engine_value_is_accepted(load_parser, value, remote):
+    parser = load_parser(engine=value)
+    assert parser.PaperlessPaddleParser.uses_remote_service is remote
+    parser.PaperlessPaddleParser()
