@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from paperless_paddleocr.ocrmypdf_plugin import _blocks_to_text
 from paperless_paddleocr.paddle_engine.hocr import Word
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
+from paperless_paddleocr.paddle_engine.merge import _blocks_to_text
 
 
 def _text(words: list[Word]) -> str:

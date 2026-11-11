@@ -1,17 +1,9 @@
-"""Regression tests for ``generate_pdf`` (Finding 13 + the ocrmypdf>=17 rewrite).
+"""Regression test for ``generate_pdf`` after the ocrmypdf>=17 rewrite.
 
-Two contracts are pinned here:
-
-* **Polymorphic dispatch (F13):** ocrmypdf calls ``generate_pdf`` on the
-  *instance* returned by ``get_ocr_engine()`` - a ``MultiLangPaddleEngine``.
-  ``generate_pdf`` must be a classmethod so ``cls.generate_hocr`` reaches
-  the subclass and the multi-language merge is not silently bypassed.
-
-* **ocrmypdf>=17 rendering:** ``generate_pdf`` parses the hOCR with
-  ``HocrParser`` and renders a real text-only PDF via ``Fpdf2PdfRenderer``
-  (ocrmypdf 17 removed the old ``ocrmypdf.hocrtransform.HocrTransform``).
-  The renderer is *not* stubbed, so this test fails loudly if the ocrmypdf
-  hOCR→PDF surface drifts again.
+``generate_pdf`` parses the hOCR with ``HocrParser`` and renders a real
+text-only PDF via ``Fpdf2PdfRenderer`` (ocrmypdf 17 removed the old
+``ocrmypdf.hocrtransform.HocrTransform``). The renderer is *not* stubbed, so
+this test fails loudly if the ocrmypdf hOCR→PDF surface drifts again.
 """
 
 from __future__ import annotations
@@ -20,64 +12,37 @@ import types
 
 from PIL import Image
 
-from paperless_paddleocr.ocrmypdf_plugin import MultiLangPaddleEngine, _merged_page
-from paperless_paddleocr.paddle_engine import classic, vl
-from paperless_paddleocr.paddle_engine.hocr import Word, write_document
+from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic
+from paperless_paddleocr.paddle_engine.hocr import Word
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
+from paperless_paddleocr.paddle_engine.merge import _merged_page
 
 
 def _tiny_png(path):
     Image.new("RGB", (120, 40), "white").save(path, dpi=(300, 300))
 
 
-def test_generate_pdf_dispatches_and_renders_textonly_pdf(tmp_path, monkeypatch):
+def test_generate_pdf_renders_a_textonly_pdf(tmp_path, monkeypatch):
     img = tmp_path / "page.png"
     _tiny_png(img)
     out_pdf = tmp_path / "out.pdf"
     out_text = tmp_path / "out.txt"
 
-    calls: list[str] = []
-
-    def fake_multilang_generate_hocr(input_file, output_hocr, output_text, options):
-        # Proves dispatch reached the subclass, and produces a *real* hOCR
-        # in the exact format we ship so HocrParser/Fpdf2PdfRenderer run for
-        # real (not stubbed).
-        calls.append("multilang")
+    def fake_build_page(input_file, options):
         words = [
             Word("hallo", (4, 4, 54, 30), 95),
             Word("welt", (60, 4, 110, 30), 93),
         ]
         blocks = reading_blocks(words, bbox_of=lambda w: w.box)
-        write_document(
-            _merged_page(blocks, 120, 40, hocr_lang="german"),
-            output_hocr,
-            output_text,
-            sidecar="hallo welt",
-        )
+        return _merged_page(blocks, 120, 40, hocr_lang="german")
 
-    def fake_base_classic(*a, **k):
-        calls.append("base_classic")
+    monkeypatch.setattr(classic, "build_page", fake_build_page)
 
-    def fake_base_vl(*a, **k):
-        calls.append("base_vl")
-
-    monkeypatch.setattr(
-        MultiLangPaddleEngine,
-        "generate_hocr",
-        staticmethod(fake_multilang_generate_hocr),
-    )
-    monkeypatch.setattr(classic, "build_page", fake_base_classic)
-    monkeypatch.setattr(vl, "build_page", fake_base_vl)
-
-    options = types.SimpleNamespace(languages=["en", "german"], paddle_engine="classic-cpu")
+    options = types.SimpleNamespace(languages=["german"], paddle_engine="classic-cpu")
 
     # Call exactly as ocrmypdf's textonly-pdf pipeline does: on the instance.
-    engine = MultiLangPaddleEngine()
+    engine = PaddleOCREngine()
     engine.generate_pdf(img, out_pdf, out_text, options)
-
-    assert calls == ["multilang"], (
-        f"generate_pdf must dispatch only to MultiLangPaddleEngine.generate_hocr, got {calls!r}"
-    )
 
     data = out_pdf.read_bytes()
     assert data.startswith(b"%PDF"), "generate_pdf must emit a real PDF"

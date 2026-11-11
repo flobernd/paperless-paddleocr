@@ -1,8 +1,9 @@
-"""Coverage for MultiLangPaddleEngine's multi-language branch.
+"""Coverage for the language passes of PaddleOCREngine.generate_hocr.
 
 The classic adapter (classic.build_page) is stubbed to return a fixed page
 per language, so the failure path, NMS merging, the preparation of each
-page's words and winner selection are exercised without paddle installed.
+page's words and winner selection in paddle_engine.merge are exercised
+without paddle installed.
 """
 
 from __future__ import annotations
@@ -14,10 +15,10 @@ import pytest
 from PIL import Image
 
 from paperless_paddleocr import ocrmypdf_plugin
-from paperless_paddleocr.ocrmypdf_plugin import MultiLangPaddleEngine, _merged_page
 from paperless_paddleocr.paddle_engine import PaddleOCREngine, classic, vl
 from paperless_paddleocr.paddle_engine.hocr import Block, Line, Page, Word, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
+from paperless_paddleocr.paddle_engine.merge import _merged_page
 
 
 def _merged_hocr(words: list[Word], hocr_lang: str) -> Page:
@@ -61,7 +62,7 @@ def _generate(tmp_path, strategy, langs):
     out_hocr = tmp_path / "out.hocr"
     out_text = tmp_path / "out.txt"
     options = _opts(languages=langs, paddle_multi_lang_strategy=strategy)
-    MultiLangPaddleEngine.generate_hocr(img, out_hocr, out_text, options)
+    PaddleOCREngine.generate_hocr(img, out_hocr, out_text, options)
     return out_hocr, out_text
 
 
@@ -162,7 +163,7 @@ def _count_passes(tmp_path, monkeypatch, engine: str) -> int:
     img = tmp_path / "page.png"
     Image.new("RGB", (200, 100), "white").save(img)
     options = types.SimpleNamespace(languages=["en", "german"], paddle_engine=engine)
-    MultiLangPaddleEngine.generate_hocr(img, tmp_path / "o.hocr", tmp_path / "o.txt", options)
+    PaddleOCREngine.generate_hocr(img, tmp_path / "o.hocr", tmp_path / "o.txt", options)
     return len(calls)
 
 
@@ -174,24 +175,18 @@ def test_classic_still_runs_one_pass_per_language(tmp_path, monkeypatch):
     assert _count_passes(tmp_path, monkeypatch, "classic-cpu") == 2
 
 
-def test_single_language_keeps_the_engine_sidecar(tmp_path, monkeypatch):
-    # The engine now writes a reading-ordered sidecar itself; the plugin
-    # must not rebuild (and re-order) it from the hOCR.
-    def fake(input_file, output_hocr, output_text, options) -> None:
-        write_document(
-            _merged_hocr([Word("x", (0, 0, 10, 10), 90)], "en"),
-            output_hocr,
-            output_text,
-            sidecar="ENGINE ORDER",
-        )
+def _spaced_page(lang: str) -> Page:
+    """A page whose one line has two spaces, where a join of its words has one."""
+    words = [Word("a", (0, 0, 20, 10), 90), Word("b", (40, 0, 60, 10), 90)]
+    line = Line(box=(0, 0, 60, 10), confidence=90, text="a  b", words=words)
+    block = Block(box=(0, 0, 60, 10), lines=[line])
+    return Page(width=200, height=100, lang=lang, ocr_system="test", blocks=[block])
 
-    monkeypatch.setattr(PaddleOCREngine, "generate_hocr", staticmethod(fake))
-    img = tmp_path / "page.png"
-    Image.new("RGB", (200, 100), "white").save(img)
-    out_text = tmp_path / "o.txt"
-    options = types.SimpleNamespace(languages=["en"], paddle_engine="classic-cpu")
-    MultiLangPaddleEngine.generate_hocr(img, tmp_path / "o.hocr", out_text, options)
-    assert out_text.read_text(encoding="utf-8") == "ENGINE ORDER"
+
+def test_single_language_keeps_the_engine_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(classic, "build_page", lambda input_file, options: _spaced_page("en"))
+    _, out_text = _generate(tmp_path, "winner", ["en"])
+    assert out_text.read_text(encoding="utf-8") == "a  b"
 
 
 def test_merged_hocr_groups_words_into_lines(tmp_path):

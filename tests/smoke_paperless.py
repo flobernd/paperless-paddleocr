@@ -78,15 +78,16 @@ def check_parser_imports() -> None:
 
 def check_plugin_and_languages() -> None:
     from paperless_paddleocr.languages import resolve_paddle_languages
-    from paperless_paddleocr.ocrmypdf_plugin import MultiLangPaddleEngine, get_ocr_engine
+    from paperless_paddleocr.ocrmypdf_plugin import get_ocr_engine
+    from paperless_paddleocr.paddle_engine import PaddleOCREngine
 
     resolved = resolve_paddle_languages("eng+deu", None)
     if resolved != ["en", "german"]:
         _fail(f"resolve_paddle_languages('eng+deu') = {resolved!r}, expected ['en','german']")
 
     engine = get_ocr_engine()
-    if not isinstance(engine, MultiLangPaddleEngine):
-        _fail(f"get_ocr_engine() returned {type(engine).__name__}, expected MultiLangPaddleEngine")
+    if not isinstance(engine, PaddleOCREngine):
+        _fail(f"get_ocr_engine() returned {type(engine).__name__}, expected PaddleOCREngine")
     _ok("ocrmypdf plugin wiring + language mapping OK")
 
 

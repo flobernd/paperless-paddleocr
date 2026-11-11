@@ -1,7 +1,7 @@
 """Regression tests for Finding 14: consistent, safe hOCR ``lang``.
 
 The single-language path (``paddle_engine``) and the merged multi-language
-path (``ocrmypdf_plugin._merged_page``) must emit an *identical*,
+path (``paddle_engine.merge._merged_page``) must emit an *identical*,
 standards-valid ``lang`` attribute for the same input language, and a
 hostile language token must never break out of the attribute (Finding 11).
 """
@@ -11,9 +11,9 @@ from __future__ import annotations
 from lxml import html
 
 from paperless_paddleocr.languages import to_hocr_lang
-from paperless_paddleocr.ocrmypdf_plugin import _merged_page
 from paperless_paddleocr.paddle_engine.hocr import Word, write_document
 from paperless_paddleocr.paddle_engine.layout import reading_blocks
+from paperless_paddleocr.paddle_engine.merge import _merged_page
 
 
 def test_to_hocr_lang_is_case_insensitive_and_trims():
