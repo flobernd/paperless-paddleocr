@@ -540,7 +540,9 @@ def check_options(options: Any) -> None:
             _probe_vl_server(server_url, resolve_vl_api_key(options))
         return
 
-    if engine == "classic-gpu" and ping["cuda_error"] is not None:
+    if engine != "classic-gpu":
+        return
+    if ping["cuda_error"] is not None:
         raise MissingDependencyError(
             f"classic-gpu engine could not query CUDA devices: {ping['cuda_error']}. "
             "Verify paddlepaddle-gpu is installed and the host NVIDIA driver is reachable "
@@ -549,7 +551,7 @@ def check_options(options: Any) -> None:
     # paddlepaddle-gpu reports 0 devices when the host has no NVIDIA
     # driver or when nvidia-container-toolkit isn't wired up - fail
     # fast rather than crashing inside predict().
-    if engine == "classic-gpu" and ping["cuda_devices"] <= 0:
+    if ping["cuda_devices"] <= 0:
         raise MissingDependencyError(
             "classic-gpu engine requested but no CUDA device is visible. "
             "Check that the host has an NVIDIA driver, that "
