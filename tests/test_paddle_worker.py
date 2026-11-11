@@ -385,6 +385,17 @@ def test_orientation_returns_the_top_label_and_score(worker, png):
     assert result == {"label": "90", "score": pytest.approx(0.97)}
 
 
+@pytest.mark.parametrize(
+    ("raw", "missing"),
+    [('[{"scores": [0.97]}]', "label_names"), ('[{"label_names": ["90"]}]', "scores")],
+)
+def test_orientation_result_without_a_field_is_an_error(spawn_worker, png, raw, missing):
+    worker = spawn_worker(FAKE_ORIENTATION_RESULT=raw)
+    message = _call(worker, {"id": 34, "op": "orientation", "image": str(png)})["error"]["message"]
+    assert missing in message
+    assert "paddleocr 3.4.0" in message
+
+
 def test_orientation_reuses_one_model(worker, png, construction_log):
     for request_id in (18, 19):
         _call(worker, {"id": request_id, "op": "orientation", "image": str(png)})
