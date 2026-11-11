@@ -21,8 +21,9 @@ from paperless_paddleocr.paddle_engine.hocr import (
     clamp_box,
     clean_text,
     order_page,
+    words_baseline,
 )
-from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
+from paperless_paddleocr.paddle_engine.layout import reading_blocks
 
 log = logging.getLogger("paperless.paddleocr.merge")
 
@@ -170,10 +171,7 @@ def _merged_page(
                 confidence=round(sum(w.confidence for w in line_words) / len(line_words)),
                 text=" ".join(w.text for w in line_words),
                 words=list(line_words),
-                baseline=fit_hocr_baseline(
-                    [((w.box[0] + w.box[2]) / 2.0, float(w.box[3])) for w in line_words],
-                    box,
-                ),
+                baseline=words_baseline(line_words, box),
             )
             page.blocks.append(Block(box=box, lines=[line]))
     return page

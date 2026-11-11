@@ -9,13 +9,14 @@ invisible text layer.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from paperless_paddleocr.languages import to_hocr_lang
 from paperless_paddleocr.paddle_engine.geometry import BBox, estimate_word_boxes
-from paperless_paddleocr.paddle_engine.layout import reading_blocks
+from paperless_paddleocr.paddle_engine.layout import fit_hocr_baseline, reading_blocks
 
 _XML_INVALID_RE = re.compile(r"[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
@@ -76,6 +77,11 @@ def words_from_text(text: str, box: BBox, confidence: int) -> list[Word]:
         Word(tok, b, confidence)
         for tok, b in zip(tokens, estimate_word_boxes(tokens, box), strict=False)
     ]
+
+
+def words_baseline(words: Sequence[Word], box: BBox) -> tuple[float, float]:
+    """The hOCR baseline of the line ``box``, fitted through the bottom centre of each word box."""
+    return fit_hocr_baseline([((w.box[0] + w.box[2]) / 2.0, float(w.box[3])) for w in words], box)
 
 
 def clean_text(text: str) -> str:
