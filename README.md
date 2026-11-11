@@ -659,6 +659,9 @@ Check:
    [`examples/docker-compose.classic-gpu.yml`](examples/docker-compose.classic-gpu.yml)).
 4. `paddlepaddle-gpu` (not `paddlepaddle`) is installed in the worker venv. The recipe Dockerfile takes care of this.
 
+The message "classic-gpu engine could not query CUDA devices" means that the query itself failed, and the message names
+the error of the query. That error says what failed, and the four checks of the list apply to this message too.
+
 ### `apt-get` fails with "Could not resolve"
 
 `setup.sh` updates package lists and installs native libraries required by PaddleOCR.

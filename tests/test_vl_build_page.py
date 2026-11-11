@@ -64,7 +64,7 @@ def test_build_page_sends_the_image_path_the_kwargs_and_the_pipeline_version(tmp
     requests = _answer(monkeypatch, _result(None, []))
     vl.build_page(png, options)
     # The constructor arguments carry no pipeline_version, which the worker
-    # adds only when its paddleocr takes the parameter.
+    # adds to each pipeline it builds.
     assert requests == [
         {
             "op": "vl",

@@ -25,7 +25,6 @@ def _ping(paddleocr_vl: bool = True) -> dict:
         "paddle": "3.2.1",
         "paddleocr": "3.4.0",
         "paddleocr_vl": paddleocr_vl,
-        "python": "3.13.5",
     }
 
 
@@ -121,5 +120,6 @@ def test_worker_without_paddleocr_vl_is_a_missing_dependency(monkeypatch):
     monkeypatch.setenv("PAPERLESS_PADDLEOCR_PYTHON", "/srv/paddle-venv/bin/python")
     monkeypatch.setattr(ocrmypdf_plugin, "_urlopen", _ok_urlopen([]))
     monkeypatch.setattr(worker, "call", lambda request: _ping(paddleocr_vl=False))
-    with pytest.raises(MissingDependencyError, match="/srv/paddle-venv/bin/python"):
+    with pytest.raises(MissingDependencyError, match="/srv/paddle-venv/bin/python") as info:
         ocrmypdf_plugin.check_options(_opts())
+    assert "3.4.0" in str(info.value)
